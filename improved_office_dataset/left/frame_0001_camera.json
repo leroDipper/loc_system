@@ -1,0 +1,11 @@
+{
+  "focal_length_mm": 35,
+  "focal_length_35mm_equivalent": 39.375,
+  "sensor_width_mm": 32,
+  "resolution": [
+    1280,
+    960
+  ],
+  "f_number": 2.8,
+  "iso": 100
+}
