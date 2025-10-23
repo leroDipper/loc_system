@@ -7,17 +7,34 @@ import numpy as np
 class PoseEstimator:
     """Estimates camera pose using PnP with RANSAC."""
     
-    def __init__(self, reprojection_error=8.0, confidence=0.99):
+    def __init__(self, reprojection_error=8.0, confidence=0.99, 
+                 min_inliers=15, max_position_deviation=10.0):
         """
         Initialize pose estimator.
         
         Args:
             reprojection_error: RANSAC reprojection error threshold (pixels)
             confidence: RANSAC confidence level (0-1)
+            min_inliers: Minimum number of inliers required
+            max_position_deviation: Maximum allowed distance from map center (meters)
         """
         self.reprojection_error = reprojection_error
         self.confidence = confidence
-        self.dist_coeffs = np.zeros(5, dtype=np.float32)  # No distortion
+        self.min_inliers = min_inliers
+        self.max_position_deviation = max_position_deviation
+        self.dist_coeffs = np.zeros(5, dtype=np.float32)
+        self.map_center = None
+    
+    def set_map_bounds(self, xyz_world):
+        """
+        Set expected map bounds for outlier detection.
+        
+        Args:
+            xyz_world: N×3 array of 3D map points
+        """
+        self.map_center = np.mean(xyz_world, axis=0)
+        map_extent = np.max(np.linalg.norm(xyz_world - self.map_center, axis=1))
+        self.max_position_deviation = map_extent + 5.0  # Map extent + buffer
     
     def estimate_pose(self, points_3d, points_2d, K):
         """
@@ -40,7 +57,6 @@ class PoseEstimator:
         if len(points_3d) < 4 or len(points_2d) < 4:
             return None
         
-        # Ensure correct types
         points_3d = np.array(points_3d, dtype=np.float32)
         points_2d = np.array(points_2d, dtype=np.float32)
         K = np.array(K, dtype=np.float32)
@@ -58,12 +74,20 @@ class PoseEstimator:
         if not success or inliers is None:
             return None
         
+        # Check minimum inliers
+        if len(inliers) < self.min_inliers:
+            return None
+        
         # Convert rotation vector to matrix
         R, _ = cv2.Rodrigues(rvec)
-        
-        # Compute camera center: C = -R^T @ t
         t = tvec.flatten()
         C = -R.T @ t
+        
+        # Outlier check: position should be near the map
+        if self.map_center is not None:
+            distance_from_center = np.linalg.norm(C - self.map_center)
+            if distance_from_center > self.max_position_deviation:
+                return None
         
         return {
             'position': C,
@@ -77,5 +101,7 @@ class PoseEstimator:
         """Get current estimator configuration."""
         return {
             'reprojection_error': self.reprojection_error,
-            'confidence': self.confidence
+            'confidence': self.confidence,
+            'min_inliers': self.min_inliers,
+            'max_position_deviation': self.max_position_deviation
         }

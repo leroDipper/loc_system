@@ -17,7 +17,8 @@ class Localiser:
     def __init__(self, xyz_world, map_descriptors, K, 
                  ratio_threshold=0.75, 
                  reprojection_error=8.0,
-                 confidence=0.99):
+                 confidence=0.99,
+                 min_inliers=15):
         """
         Initialize localiser with map and camera parameters.
         
@@ -28,6 +29,7 @@ class Localiser:
             ratio_threshold: Lowe's ratio test threshold
             reprojection_error: RANSAC reprojection error (pixels)
             confidence: RANSAC confidence level
+            min_inliers: Minimum inliers required for valid pose
         """
         self.xyz_world = np.array(xyz_world, dtype=np.float32)
         self.map_descriptors = np.array(map_descriptors, dtype=np.float32)
@@ -38,8 +40,12 @@ class Localiser:
         self.matcher = FeatureMatcher(ratio_threshold=ratio_threshold)
         self.pose_estimator = PoseEstimator(
             reprojection_error=reprojection_error,
-            confidence=confidence
+            confidence=confidence,
+            min_inliers=min_inliers
         )
+        
+        # Set map bounds for outlier detection
+        self.pose_estimator.set_map_bounds(self.xyz_world)
     
     def localise(self, image_path):
         """
@@ -83,7 +89,7 @@ class Localiser:
         )
         
         if pose is None:
-            return None, "Pose estimation failed (RANSAC)"
+            return None, "Pose estimation failed (RANSAC or outlier rejection)"
         
         return pose, None
     

@@ -57,13 +57,13 @@ def main():
     
     
     # localise a single image
-    print("\nlocalising frame_0010.jpg...")
+    print("\nlocalising frame_0132.jpg...")
     # result, error = localiser.localise(dataset_root + 'frame_fig8_0012.jpg')
-    result, error = localiser.localise('colmap_database/large_map/large_set/frame_0010.jpg')
+    result, error = localiser.localise('colmap_database/large_map/large_set/frame_0132.jpg')
 
     
     if result:
-        gt = gt_positions['frame_0010.jpg']
+        gt = gt_positions['frame_0132.jpg']
         error_dist = np.linalg.norm(result['position'] - gt)
         
         print(f"✓ Success!")
@@ -75,26 +75,26 @@ def main():
     else:
         print(f"Failed: {error}")
     
-    # localise multiple images
-    print("\nlocalising batch of images...")
+    # # localise multiple images
+    # print("\nlocalising batch of images...")
 
-    images = [
-        dataset_root + 'frame_0035.jpg',
-        dataset_root + 'frame_0070.jpg'
-    ]
+    # images = [
+    #     dataset_root + 'frame_0035.jpg',
+    #     dataset_root + 'frame_0070.jpg'
+    # ]
 
     
-    results = localiser.localise_batch(images)
+    # results = localiser.localise_batch(images)
     
-    for img_path, (result, error) in zip(images, results):
-        img_name = img_path.split('/')[-1]
+    # for img_path, (result, error) in zip(images, results):
+    #     img_name = img_path.split('/')[-1]
         
-        if result:
-            gt = gt_positions[img_name]
-            error_dist = np.linalg.norm(result['position'] - gt)
-            print(f"{img_name}: Error {error_dist:.3f}m | Inliers {result['inliers']}/{result['total']}")
-        else:
-            print(f"{img_name}: FAILED - {error}")
+    #     if result:
+    #         gt = gt_positions[img_name]
+    #         error_dist = np.linalg.norm(result['position'] - gt)
+    #         print(f"{img_name}: Error {error_dist:.3f}m | Inliers {result['inliers']}/{result['total']}")
+    #     else:
+    #         print(f"{img_name}: FAILED - {error}")
 
 
 if __name__ == "__main__":
