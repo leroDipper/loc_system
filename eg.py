@@ -38,18 +38,18 @@ def load_colmap_ground_truth(images_txt_path):
     return colmap_poses
 
 def main():
-    map_root = '/home/leroy-marewangepo/colmap_database/fig8/'
+    map_root = 'colmap_database/large_map/'
     # Load map
     print("Loading map...")
     xyz_world, map_descriptors = MapLoader.load_map(map_root + 'colmap_map.npz')
     print(f"Loaded {len(xyz_world)} 3D points")
 
     # Dataset root path #
-    dataset_root = '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/'
+    dataset_root = 'colmap_database/large_map/large_set_test'
 
     K = MapLoader.load_camera_intrinsics(dataset_root + 'ground_truth_poses.json')
     
-    gt_positions = load_colmap_ground_truth('/home/leroy-marewangepo/colmap_database/figure_8_map/project_files/images.txt')
+    gt_positions = load_colmap_ground_truth(map_root +'project_files/images.txt')
     
     # Initialize localiser
     localiser = Localiser(xyz_world, map_descriptors, K)
@@ -57,11 +57,11 @@ def main():
     
     
     # localise a single image
-    print("\nlocalising frame_0010.jpg...")
-    result, error = localiser.localise('/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0010.jpg')
+    print("\nlocalising frame_circle_0010.jpg...")
+    result, error = localiser.localise(dataset_root + 'frame_circle_0010.jpg')
     
     if result:
-        gt = gt_positions['frame_0010.jpg']
+        gt = gt_positions['frame_circle_0010.jpg']
         error_dist = np.linalg.norm(result['position'] - gt)
         
         print(f"✓ Success!")
@@ -75,23 +75,10 @@ def main():
     
     # localise multiple images
     print("\nlocalising batch of images...")
+
     images = [
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0001.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0004.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0060.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0014.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0024.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0026.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0031.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0034.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0038.jpg'
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0042.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0044.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0046.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0050.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0059.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0091.jpg',
-        '/home/leroy-marewangepo/colmap_database/figure_8_map/figure8/left/frame_0102.jpg',
+        dataset_root + 'frame_circle_0035.jpg',
+        dataset_root + 'frame_fig8_0070.jpg'
     ]
 
     
