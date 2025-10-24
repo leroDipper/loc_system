@@ -49,3 +49,21 @@ class FeatureExtractor:
         gray = cv2.cvtColor(img_array, cv2.COLOR_BGR2GRAY)
         keypoints, descriptors = self.sift.detectAndCompute(gray, None)
         return keypoints, descriptors
+    
+    def resize_and_extract(self, image_path, target_size=(640, 480)):
+        """
+        Resize image to target size and extract SIFT features.
+        
+        Args:
+            image_path: Path to image file
+            target_size: Tuple (width, height) for resizing
+        Returns:
+            tuple: (keypoints, descriptors)
+        """
+        img = cv2.imread(image_path)
+        if img is None:
+            raise FileNotFoundError(f"Could not load image: {image_path}")  
+        resized_img = cv2.resize(img, target_size)
+        gray = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
+        keypoints, descriptors = self.sift.detectAndCompute(gray, None)
+        return keypoints, descriptors

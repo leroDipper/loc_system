@@ -59,7 +59,7 @@ def main():
     # localise a single image
     print("\nlocalising frame_0132.jpg...")
     # result, error = localiser.localise(dataset_root + 'frame_fig8_0012.jpg')
-    result, error = localiser.localise(dataset_root + 'frame_0132.jpg',)
+    result, error = localiser.localise(dataset_root + 'frame_0132.jpg', option='resize')
 
     
     if result:
@@ -87,7 +87,7 @@ def main():
     ]
 
     
-    results = localiser.localise_batch(images)
+    results = localiser.localise_batch(images, option='resize')
     
     for img_path, (result, error) in zip(images, results):
         img_name = img_path.split('/')[-1]

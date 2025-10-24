@@ -62,7 +62,7 @@ def main():
     
     for img_path in test_images:
         img_name = img_path.name
-        result, error = localiser.localise(str(img_path))
+        result, error = localiser.localise(str(img_path), option='resize')
         
         if result and img_name in gt_positions:
             gt = gt_positions[img_name]

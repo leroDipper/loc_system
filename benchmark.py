@@ -55,14 +55,17 @@ def load_colmap_ground_truth(images_txt_path):
     return colmap_poses
 
 
-def benchmark_single_image(localiser, image_path, img_name, gt_positions):
+def benchmark_single_image(localiser, image_path, img_name, gt_positions, use_resize=False):
     """Benchmark a single image localization with timing breakdown."""
     timings = {}
     
     # Time: Feature extraction
     start = time.time()
     try:
-        keypoints, descriptors = localiser.feature_extractor.extract(image_path)
+        if use_resize:
+            keypoints, descriptors = localiser.feature_extractor.resize_and_extract(image_path)
+        else:
+            keypoints, descriptors = localiser.feature_extractor.extract(image_path)
     except Exception as e:
         return None, str(e), {}
     timings['feature_extraction'] = time.time() - start
@@ -83,13 +86,24 @@ def benchmark_single_image(localiser, image_path, img_name, gt_positions):
         return None, "Not enough matches", timings
     
     matched_3d_points = localiser.xyz_world[matched_map_indices]
-    
+
+    if use_resize:
+        # Adjust K for resized image
+        K_adjusted = localiser.K.copy()
+        resize_scale = 0.5  # Assuming fixed scale for benchmark
+        K_adjusted[0, 0] *= resize_scale  # fx
+        K_adjusted[1, 1] *= resize_scale  # fy
+        K_adjusted[0, 2] *= resize_scale  # cx
+        K_adjusted[1, 2] *= resize_scale  # cy
+    else:
+        K_adjusted = localiser.K
+
     # Time: Pose estimation (RANSAC + PnP)
     start = time.time()
     pose = localiser.pose_estimator.estimate_pose(
         matched_3d_points,
         matched_2d_points,
-        localiser.K
+        K_adjusted
     )
     timings['pose_estimation'] = time.time() - start
     
@@ -107,7 +121,7 @@ def benchmark_single_image(localiser, image_path, img_name, gt_positions):
 
 def main():
     print("=" * 60)
-    print("VISUAL LOCALIZATION BENCHMARK")
+    print("VISUAL LOCALISATION BENCHMARK")
     print("=" * 60)
     
     # System info
@@ -162,7 +176,7 @@ def main():
         # Full localization with timing
         start_total = time.time()
         result, error_msg, timings = benchmark_single_image(
-            localiser, str(img_path), img_name, gt_positions
+            localiser, str(img_path), img_name, gt_positions, use_resize=True
         )
         total_time = time.time() - start_total
         

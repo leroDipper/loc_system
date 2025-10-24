@@ -47,12 +47,14 @@ class Localiser:
         # Set map bounds for outlier detection
         self.pose_estimator.set_map_bounds(self.xyz_world)
     
-    def localise(self, image_path):
+    def localise(self, image_path, option=None, resize_scale=0.5):
         """
         localise a query image.
         
         Args:
             image_path: Path to query image
+            option: 'array', 'resize', or None
+            resize_scale: Scale factor when option='resize' (default 0.5 for 640x480)
             
         Returns:
             tuple: (result, error_message) where:
@@ -61,7 +63,20 @@ class Localiser:
         """
         # Extract features
         try:
-            keypoints, descriptors = self.feature_extractor.extract(image_path)
+            if option == 'array':
+                keypoints, descriptors = self.feature_extractor.extract_from_array(image_path)
+                K_adjusted = self.K
+            elif option == 'resize':
+                keypoints, descriptors = self.feature_extractor.resize_and_extract(image_path)
+                # Scale K for resized image
+                K_adjusted = self.K.copy()
+                K_adjusted[0, 0] *= resize_scale  # fx
+                K_adjusted[1, 1] *= resize_scale  # fy
+                K_adjusted[0, 2] *= resize_scale  # cx
+                K_adjusted[1, 2] *= resize_scale  # cy
+            else:
+                keypoints, descriptors = self.feature_extractor.extract(image_path)
+                K_adjusted = self.K
         except Exception as e:
             return None, f"Feature extraction failed: {str(e)}"
         
@@ -81,11 +96,11 @@ class Localiser:
         # Get corresponding 3D points
         matched_3d_points = self.xyz_world[matched_map_indices]
         
-        # Estimate pose
+        # Estimate pose with adjusted K
         pose = self.pose_estimator.estimate_pose(
             matched_3d_points,
             matched_2d_points,
-            self.K
+            K_adjusted
         )
         
         if pose is None:
@@ -93,19 +108,21 @@ class Localiser:
         
         return pose, None
     
-    def localise_batch(self, image_paths):
+    def localise_batch(self, image_paths, option=None, resize_scale=0.5):
         """
         localise multiple images.
         
         Args:
             image_paths: List of image paths
+            option: 'array', 'resize', or None
+            resize_scale: Scale factor when option='resize'
             
         Returns:
             list: List of (result, error) tuples for each image
         """
         results = []
         for path in image_paths:
-            result, error = self.localise(path)
+            result, error = self.localise(path, option=option, resize_scale=resize_scale)
             results.append((result, error))
         return results
     
