@@ -1,3 +1,9 @@
 # Ignore specific folders
 /colmap_database
 /map
+
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
