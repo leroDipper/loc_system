@@ -5,7 +5,7 @@ Test localisation on all test images and show error distribution.
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-from modules import MapLoader, Localiser
+from loc_modules import MapLoader, Localiser
 from pathlib import Path
 
 

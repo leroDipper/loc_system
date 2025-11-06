@@ -1,0 +1,4 @@
+colmap exhaustive_matcher \
+    --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code/colmap_database/large_map_xfeat/database.db \
+    --FeatureMatching.use_gpu 0
+    

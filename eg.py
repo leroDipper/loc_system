@@ -5,7 +5,7 @@ Example: Using the localisation package programmatically.
 
 import numpy as np
 from scipy.spatial.transform import Rotation
-from modules import MapLoader, Localiser
+from loc_modules import MapLoader, Localiser
 
 
 

@@ -10,7 +10,7 @@ import platform
 import numpy as np
 from pathlib import Path
 from scipy.spatial.transform import Rotation
-from modules import MapLoader, Localiser
+from loc_modules import MapLoader, Localiser
 
 
 def get_system_info():
