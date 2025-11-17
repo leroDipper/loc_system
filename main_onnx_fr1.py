@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     # Load INT8 ONNX model instead of PyTorch
     print("Loading INT8 ONNX model...")
-    int8_model_path = '/home/leroy-marewangepo/accelerated_features/resources/models/xfeat_640x480_int8.onnx'
+    int8_model_path = 'models/xfeat_640x480_int8.onnx'
     session = ort.InferenceSession(int8_model_path, providers=['CPUExecutionProvider'])
     print("✓ INT8 model loaded")
 
