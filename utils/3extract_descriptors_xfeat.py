@@ -3,11 +3,11 @@ import numpy as np
 import os
 
 # Connect to database
-conn = sqlite3.connect('colmap_database/large_map_xfeat/database.db')
+conn = sqlite3.connect('/home/leroy-marewangepo//database_TUMfr3.db')
 cursor = conn.cursor()
 
 # Create output directory
-os.makedirs('colmap_database/large_map_xfeat/descriptors_xfeat_640x480', exist_ok=True)
+os.makedirs('/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr3/project_files/descriptors', exist_ok=True)
 
 # Get all images
 cursor.execute("SELECT image_id, name FROM images")
@@ -26,11 +26,11 @@ for img_id, img_name in images:
         descriptors = np.frombuffer(desc_blob, dtype=np.uint8).reshape(rows, cols)
         
         # Save as text file
-        output_file = f'colmap_database/large_map_xfeat/descriptors_xfeat_640x480/{img_name}_desc.txt'
+        output_file = f'/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr3/project_files/descriptors/{img_name}_desc.txt'
         np.savetxt(output_file, descriptors, fmt='%d', delimiter=' ')
         print(f"Image: {img_name} - {descriptors.shape[0]} descriptors ({descriptors.shape[1]}D) saved to {output_file}")
     else:
         print(f"No descriptors found for {img_name}")
 
 conn.close()
-print("\nDone! Descriptors saved in descriptors_xfeat/ folder")
+print("\nDone! Descriptors saved in descriptors/ folder")

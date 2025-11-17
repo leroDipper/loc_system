@@ -41,12 +41,21 @@ class MapBuilder:
         print(f"Loaded {len(points)} 3D points")
         return points
 
-    def load_image_ids_and_descriptors(self, dataset_path, descriptors_path):
+    def load_image_ids_and_descriptors(self, dataset_path, descriptors_path, max_images=None):
         dataset_path = Path(dataset_path)
         descriptors_path = Path(descriptors_path)
 
         data = []
-        for img_path in sorted(dataset_path.glob("*.jpg")):
+        image_files = list(dataset_path.glob("*.jpg")) + list(dataset_path.glob("*.png"))
+        image_files = sorted(image_files) 
+
+        # Limit to first N images if specified
+        if max_images is not None:
+            image_files = image_files[:max_images]
+            print(f"Using first {max_images} images for map building")
+
+
+        for img_path in image_files:
             desc_path = descriptors_path / f"{img_path.name}_desc.txt"
             if not desc_path.exists():
                 print(f"Warning: Missing descriptor for {img_path.name}")
@@ -68,9 +77,9 @@ class MapBuilder:
         print(f"Loaded {len(data)} images")
         return df
 
-    def build_map_database(self, map_files, dataset_path, descriptors_path, save_to=None):
+    def build_map_database(self, map_files, dataset_path, descriptors_path, save_to=None, max_images=None):
         points = self.load_map_data(map_files)
-        df = self.load_image_ids_and_descriptors(dataset_path, descriptors_path)
+        df = self.load_image_ids_and_descriptors(dataset_path, descriptors_path, max_images)
         map_path = Path(map_files)
 
         images_data = {}

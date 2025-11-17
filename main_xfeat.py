@@ -1,6 +1,6 @@
 import torch
 import os
-from accelerated_modules import vocab_match
+from accelerated_modules import vocab_tree_match
 from loc_modules.load_gt_params import GroundTruthParams
 import cv2
 import numpy as np
@@ -8,9 +8,24 @@ import time
 import json
 from scipy.spatial.transform import Rotation
 from loc_modules import MapLoader, Localiser
+from test.memory import MemoryMonitor
+import yaml
+
+def load_camera_params(yaml_path):
+    """Load camera parameters from YAML file."""
+    with open(yaml_path, 'r') as f:
+        params = yaml.safe_load(f)
+    
+    return {
+        'width': params['resolution'][0],
+        'height': params['resolution'][1],
+        'fx': params['intrinsics'][0],
+        'fy': params['intrinsics'][1],
+        'cx': params['intrinsics'][2],
+        'cy': params['intrinsics'][3]
+    }
 
 if __name__ == "__main__":
-    print("Loading COLMAP → Ground Truth transformation...")
     scale, R, t = GroundTruthParams.load_transformation('colmap_database/large_map_xfeat/colmap_to_gt_transform.json')
 
     #load ground truth positions
@@ -28,17 +43,21 @@ if __name__ == "__main__":
         print(f"Error loading XFeat model: {e}")
         exit()
 
+    MemoryMonitor.print_memory("After loading XFeat")
+
     test_dataset_path = 'colmap_database/large_map/large_set_test_640x480'
 
     #load existing vocabulary
-    vocabulary = np.load('resources/vocabularies/vocabulary_circ_f8.npy')
+    vocabulary = 'resources/blender/vocabularies/vocab_tree.bin'
     print("Loaded existing vocabulary")
 
     #load colmap
-    data = np.load('resources/map_databases/colmap_map_train_set.npz')
+    data = np.load('resources/blender/map_databases/colmap_map_train_set.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded map: {len(map_3d_points)} points")
+
+    MemoryMonitor.print_memory("After loading map")
 
     # Camera parameters from your image
     camera_params = {
@@ -58,9 +77,11 @@ if __name__ == "__main__":
     # Build matcher
     print("\nBuilding vocabulary matcher...")
     t_start = time.time()
-    matcher = vocab_match.VocabMatcher(vocabulary, map_descriptors, top_k=3)
+    matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
     t_index = time.time() - t_start
     print(f"Index built in {t_index:.3f}s")
+
+    MemoryMonitor.print_memory("After building matcher")
 
     frame_name = 'frame_0143.jpg'
     frame_path = os.path.join(test_dataset_path, frame_name)
@@ -85,6 +106,8 @@ if __name__ == "__main__":
     query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
     t_match = time.time() - t_start
     print(f"Matched {len(query_idx)} in {t_match:.3f}s")
+
+    MemoryMonitor.print_memory("During localization")
 
     # Filter unique
     query_to_map = {}
@@ -148,6 +171,8 @@ if __name__ == "__main__":
             print(f"FPS:                {1.0/(t_extract + t_match + t_pnp):.2f}")
     else:
         print("PnP failed to find a solution.")
+
+    MemoryMonitor.print_memory("End")
 
 
 

@@ -1,4 +1,4 @@
 colmap exhaustive_matcher \
-    --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code/colmap_database/large_map_xfeat/database.db \
+    --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr1/colmap_int8/database_fr1_onnx.db \
     --FeatureMatching.use_gpu 0
     

@@ -2,8 +2,13 @@
 /colmap_database
 /map
 
+/resources
+
 
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+/build
+
