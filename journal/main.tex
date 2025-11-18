@@ -1,0 +1,178 @@
+\documentclass[12pt]{article}
+
+% ----------------------------------------------------------
+% PACKAGES
+% ----------------------------------------------------------
+\usepackage[a4paper, margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\usepackage{multirow}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
+\usepackage{mathrsfs}
+\usepackage[title]{appendix}
+\usepackage{xcolor}
+\usepackage{textcomp}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\usepackage{listings}
+
+% ----------------------------------------------------------
+% TITLE
+% ----------------------------------------------------------
+\title{Bridging the Computational Gap: Indoor Visual Localisation on Resource-Constrained Platforms}
+
+\author{
+L. Marewangepo$^{a}$ \quad W.J. Smit$^{b}$ \\
+\small $^{a}$Department of Mechanical and Mechatronic Engineering, Stellenbosch University, South Africa \\
+\small $^{b}$Department of Mechanical and Mechatronic Engineering, Stellenbosch University, South Africa 
+}
+
+\date{}
+
+% ----------------------------------------------------------
+% DOCUMENT
+% ----------------------------------------------------------
+\begin{document}
+
+\maketitle
+
+% ----------------------------------------------------------
+% ABSTRACT
+% ----------------------------------------------------------
+\begin{abstract}
+Indoor visual localisation is a critical component for mobile robotics and augmented reality applications in indoor environments. However, the widespread adoption of indoor localisation systems in settings such as warehouses, factories, and other large-scale indoor spaces is often hindered by the high computational demands of modern visual localisation techniques, which typically require powerful hardware to operate in real time. This paper presents a study on adapting state-of-the-art visual localisation methods for resource-constrained platforms, examining the trade-offs between accuracy, speed, and memory usage. We explore key design decisions including feature extraction methods, model optimization techniques, map representation strategies, and map querying approaches. The proposed methods are evaluated on a budget-friendly laptop and a Raspberry Pi 5. Our results demonstrate that real-time indoor visual localisation can be achieved using optimized learned feature extractors and efficient map querying techniques without significant loss in localisation accuracy. The pipeline implementation on the Pi 5 achieves an average localisation accuracy of 8 cm across three TUM indoor datasets at an average frame rate of 24 FPS and a memory footprint of 200 MB per frame. These results outperform traditional hand-crafted feature-based methods on the same hardware in terms of FPS and accuracy, demonstrate real-time implementation of deep learning-based feature extractors on CPU-only devices.
+\end{abstract}
+
+\textbf{Keywords:} Indoor Visual Localisation; Resource-Constrained Platforms; Feature Extraction; Neural Network Optimisation; Embedded Systems; Real-Time Performance
+
+% ----------------------------------------------------------
+% 1. INTRODUCTION
+% ----------------------------------------------------------
+\section{Introduction}
+
+
+% 2. RELATED WORK
+% ----------------------------------------------------------
+\section{Related Work}
+
+\subsection{Indoor Visual Localization Methods}
+\cite{racinskisAnnotatingSLAMData2024}
+\subsection{Local Feature Extraction}
+
+\subsubsection{Hand-Crafted Features}
+
+\subsubsection{Learned Features}
+
+\subsection{Model Optimization for Embedded Deployment}
+
+\subsection{Visual Localization on Resource-Constrained Platforms}
+
+% ----------------------------------------------------------
+% 3. METHODOLOGY
+% ----------------------------------------------------------
+\section{Methodology}
+
+\subsection{System Overview}
+
+\subsection{Feature-Based Localization Pipeline}
+
+\subsubsection{Feature Extraction}
+
+\subsubsection{Feature Matching}
+
+\subsubsection{Pose Estimation}
+
+\subsection{Map Construction}
+
+\subsection{Model Optimization Strategy}
+
+\subsubsection{ONNX Export and Verification}
+
+\subsubsection{Post-Training Quantization}
+
+\subsection{Cross-Precision Matching}
+
+% ----------------------------------------------------------
+% 4. EXPERIMENTAL SETUP
+% ----------------------------------------------------------
+\section{Experimental Setup}
+
+\subsection{Dataset}
+
+\subsection{Hardware Platforms}
+
+\subsection{Evaluation Metrics}
+
+\subsection{Implementation Details}
+
+% ----------------------------------------------------------
+% 5. RESULTS
+% ----------------------------------------------------------
+\section{Results}
+
+\subsection{Model Export Verification}
+
+\subsection{Quantization Impact Analysis}
+
+\subsection{Localization Performance}
+
+\subsubsection{Accuracy Evaluation}
+
+\subsubsection{Computational Performance}
+
+\subsection{Cross-Precision Matching Evaluation}
+
+\subsection{Platform Comparison}
+
+% Example Table
+\begin{table}[H]
+\centering
+\caption{Example Results Table}
+\begin{tabular}{lcc}
+\toprule
+Method & Accuracy & Runtime (ms) \\
+\midrule
+Baseline & 75.2\% & 12 \\
+Proposed Model & 83.5\% & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ----------------------------------------------------------
+% 6. DISCUSSION
+% ----------------------------------------------------------
+\section{Discussion}
+
+\subsection{Bridging the Computational Gap}
+
+\subsection{Accuracy-Speed Tradeoffs}
+
+\subsection{Cross-Precision Matching Viability}
+
+\subsection{Practical Deployment Considerations}
+
+\subsection{Limitations}
+
+% ----------------------------------------------------------
+% 7. CONCLUSION
+% ----------------------------------------------------------
+\section{Conclusion}
+
+\subsection{Summary}
+
+\subsection{Future Work}
+
+% ----------------------------------------------------------
+% REFERENCES
+% ----------------------------------------------------------
+\bibliographystyle{ieeetr}
+\bibliography{/home/leroy-marewangepo/OneDrive/Masters/Masters_Stuff/Report/template-stb-masters/bib/Masters.bib}
+
+\end{document}

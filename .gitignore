@@ -12,3 +12,20 @@ __pycache__/
 
 /build
 
+journal/images
+
+
+# Ignore LaTeX intermediate files
+*.aux
+*.bbl
+*.blg
+*.brf
+*.idx
+*.ind
+*.lof
+*.log
+*.pdf
+*.out
+*.gz
+*.bib
+
