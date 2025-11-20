@@ -1,0 +1,9 @@
+Margin Analysis Statistics
+==================================================
+FP32 mean margin:        15.03
+INT8 mean margin:        15.66
+Margin degradation:      -0.63
+Relative degradation:    -4.2%
+FP32 Lowe's pass rate:   20.2%
+INT8 Lowe's pass rate:   19.9%
+INT8 negative margins:   0.0%

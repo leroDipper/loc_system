@@ -208,6 +208,12 @@ if __name__ == "__main__":
         total_time = np.mean(timings['extract']) + np.mean(timings['match']) + np.mean(timings['pnp'])
         print(f"  Total:              {total_time*1000:.2f} ms")
         print(f"  Average FPS:        {1.0/total_time:.2f}")
+
+        np.savez('results/fr1_fp32_errors.npz', 
+            errors=np.array(errors),
+            match_counts=np.array(match_counts),
+            success_rate=len(errors)/len(test_frames))
+        print("✓ Saved errors to results/fr1_fp32_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")
     

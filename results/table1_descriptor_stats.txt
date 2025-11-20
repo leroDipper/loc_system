@@ -1,0 +1,8 @@
+Table 1: Descriptor Statistics
+==================================================
+Mean L2 difference       | 1.0745
+Median L2 difference     | 1.0915
+Std of differences       | 0.1572
+Max difference           | 1.4905
+Mean descriptor norm     | 1.0000
+Perturbation/norm (%)    | 107.5
