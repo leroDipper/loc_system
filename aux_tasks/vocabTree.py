@@ -89,7 +89,7 @@ class VocabTreeBuilder:
 
 
 if __name__ == "__main__":
-    data = np.load('resources/tum_fr3/map_databases/tumfr3_map_train.npz')
+    data = np.load('sift_stuff/tum_fr1/map_databases/tumfr1_map_train.npz')
     map_descriptors = data['descriptors'].astype(np.float32)
     
     n_branches = 10
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     
     builder = VocabTreeBuilder(n_branches, depth, descriptor_dim)
     builder.build(map_descriptors)
-    builder.save('resources/tum_fr3/vocabularies/vocab_tree.bin')
+    builder.save('sift_stuff/tum_fr1/vocabularies/vocab_tree.bin')
     
     vocab = builder.get_vocabulary()
     print(f"Vocabulary: {vocab.shape}")

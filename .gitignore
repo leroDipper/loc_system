@@ -29,3 +29,7 @@ journal/images
 *.gz
 *.bib
 
+/sift_stuff
+
+/results
+

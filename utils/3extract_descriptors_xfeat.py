@@ -3,11 +3,11 @@ import numpy as np
 import os
 
 # Connect to database
-conn = sqlite3.connect('/home/leroy-marewangepo//database_TUMfr3.db')
+conn = sqlite3.connect('sift_stuff/tum_fr1/tum_fr1.db')
 cursor = conn.cursor()
 
 # Create output directory
-os.makedirs('/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr3/project_files/descriptors', exist_ok=True)
+os.makedirs('sift_stuff/tum_fr1/project_files/descriptors', exist_ok=True)
 
 # Get all images
 cursor.execute("SELECT image_id, name FROM images")
@@ -26,7 +26,7 @@ for img_id, img_name in images:
         descriptors = np.frombuffer(desc_blob, dtype=np.uint8).reshape(rows, cols)
         
         # Save as text file
-        output_file = f'/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr3/project_files/descriptors/{img_name}_desc.txt'
+        output_file = f'sift_stuff/tum_fr1/project_files/descriptors/{img_name}_desc.txt'
         np.savetxt(output_file, descriptors, fmt='%d', delimiter=' ')
         print(f"Image: {img_name} - {descriptors.shape[0]} descriptors ({descriptors.shape[1]}D) saved to {output_file}")
     else:
