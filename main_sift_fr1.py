@@ -210,7 +210,7 @@ if __name__ == "__main__":
              errors=np.array(errors),
              match_counts=np.array(match_counts),
              success_rate=len(errors)/len(test_frames))
-        print("✓ Saved errors to results/fr1_sift_errors.npz")
+        print("Saved errors to results sucess /fr1_sift_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")
     
