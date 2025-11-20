@@ -242,8 +242,11 @@ if __name__ == "__main__":
 
         np.savez('results/fr1_fp32_errors.npz', 
             errors=np.array(errors),
-            match_counts=np.array(match_counts),
-            success_rate=len(errors)/len(test_frames))
+             match_counts=np.array(match_counts),
+             timings_extract=np.array(timings['extract']),
+             timings_match=np.array(timings['match']),
+             timings_pnp=np.array(timings['pnp']),
+             success_rate=len(errors)/len(test_frames))
         print("✓ Saved errors to results/fr1_fp32_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")

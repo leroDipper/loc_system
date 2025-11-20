@@ -6,14 +6,17 @@ def plot_timing_breakdown():
     """
     Generate timing breakdown figure (stacked bar chart).
     Shows feature extraction, matching, and PnP times on Raspberry Pi.
+    Compares FP32, INT8, and SIFT.
     """
     
     print("Loading timing data from Raspberry Pi experiments...")
     
     # Define which experiments to load
     experiments = {
+        'FR1 FP32': 'results/fr1_fp32_errors.npz',
         'FR1 INT8': 'results/fr1_int8_errors.npz',
         'FR1 SIFT': 'results/fr1_sift_errors.npz',
+        'FR3 FP32': 'results/fr3_fp32_errors.npz',
         'FR3 INT8': 'results/fr3_int8_errors.npz',
     }
     
@@ -69,10 +72,15 @@ def plot_timing_breakdown():
         print(f"  Total:              {total_mean:6.2f} ms")
         print(f"  FPS:                {fps:6.2f}")
     
+    # Compute speedups (if FP32 exists)
+    if 'FR1 FP32' in stats and 'FR1 INT8' in stats:
+        speedup = stats['FR1 FP32']['total'] / stats['FR1 INT8']['total']
+        print(f"\nINT8 speedup over FP32 (FR1): {speedup:.2f}x")
+    
     print("="*60)
     
     # Create stacked bar chart
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
     
     methods = list(stats.keys())
     x_pos = np.arange(len(methods))
@@ -82,25 +90,28 @@ def plot_timing_breakdown():
     pnp_times = [stats[m]['pnp'] for m in methods]
     
     # Stacked bars
-    bar_width = 0.6
+    bar_width = 0.65
     p1 = ax.bar(x_pos, extract_times, bar_width, label='Feature Extraction', 
-                color='steelblue', edgecolor='black')
+                color='steelblue', edgecolor='black', linewidth=1.2)
     p2 = ax.bar(x_pos, match_times, bar_width, bottom=extract_times, 
-                label='Descriptor Matching', color='orange', edgecolor='black')
+                label='Descriptor Matching', color='orange', edgecolor='black', linewidth=1.2)
     p3 = ax.bar(x_pos, pnp_times, bar_width, 
                 bottom=np.array(extract_times) + np.array(match_times),
-                label='PnP RANSAC', color='lightgreen', edgecolor='black')
+                label='PnP RANSAC', color='lightgreen', edgecolor='black', linewidth=1.2)
     
     # Add total time and FPS annotations on top of bars
     for i, method in enumerate(methods):
         total = stats[method]['total']
         fps = stats[method]['fps']
-        ax.text(i, total + 2, f'{total:.1f} ms\n{fps:.1f} FPS', 
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
+        ax.text(i, total + 3, f'{total:.1f} ms\n{fps:.1f} FPS', 
+                ha='center', va='bottom', fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.8))
     
     # Add horizontal line at 42ms (24 FPS threshold)
     ax.axhline(y=42, color='red', linestyle='--', linewidth=2, alpha=0.7, 
                label='24 FPS threshold (42ms)')
+    ax.text(len(methods)-0.5, 44, '24 FPS', fontsize=10, color='red', 
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
     
     # Formatting
     ax.set_ylabel('Time per Frame (ms)', fontsize=13)
@@ -109,9 +120,9 @@ def plot_timing_breakdown():
                 fontsize=14, fontweight='bold')
     ax.set_xticks(x_pos)
     ax.set_xticklabels(methods, fontsize=11)
-    ax.legend(fontsize=11, loc='upper right')
+    ax.legend(fontsize=11, loc='upper left')
     ax.grid(axis='y', alpha=0.3, linestyle='--')
-    ax.set_ylim(0, max([stats[m]['total'] for m in methods]) * 1.15)
+    ax.set_ylim(0, max([stats[m]['total'] for m in methods]) * 1.2)
     
     plt.tight_layout()
     plt.savefig('results/figure4_timing_breakdown.png', dpi=300, bbox_inches='tight')
@@ -130,6 +141,20 @@ def plot_timing_breakdown():
         s = stats[method]
         print(f"{method:11} | {s['extract']:6.2f}  | {s['match']:5.2f} | "
               f"{s['pnp']:4.2f} | {s['total']:5.2f} | {s['fps']:4.2f}")
+    
+    # Speedup table
+    if 'FR1 FP32' in stats and 'FR1 INT8' in stats:
+        print("\n" + "="*60)
+        print("SPEEDUP ANALYSIS")
+        print("="*60)
+        fp32 = stats['FR1 FP32']
+        int8 = stats['FR1 INT8']
+        print(f"Component        | FP32    | INT8    | Speedup")
+        print(f"-----------------|---------|---------|--------")
+        print(f"Feature extract  | {fp32['extract']:6.2f}  | {int8['extract']:6.2f}  | {fp32['extract']/int8['extract']:.2f}x")
+        print(f"Matching         | {fp32['match']:6.2f}  | {int8['match']:6.2f}  | {fp32['match']/int8['match']:.2f}x")
+        print(f"PnP              | {fp32['pnp']:6.2f}  | {int8['pnp']:6.2f}  | {fp32['pnp']/int8['pnp']:.2f}x")
+        print(f"TOTAL            | {fp32['total']:6.2f}  | {int8['total']:6.2f}  | {fp32['total']/int8['total']:.2f}x")
 
 if __name__ == "__main__":
     os.makedirs('results', exist_ok=True)
