@@ -97,6 +97,15 @@ if __name__ == "__main__":
     errors = []
     match_counts = []
     timings = {'extract': [], 'match': [], 'pnp': []}
+
+     # DEBUG COUNTERS
+    skipped_no_gt = 0
+    skipped_no_image = 0
+    skipped_too_few_matches = 0
+    pnp_failed = 0
+    rejected_low_inliers = 0
+    rejected_reproj_error = 0
+
     
     for i, frame_path in enumerate(test_frames):
         frame_name = os.path.basename(frame_path)
@@ -192,21 +201,42 @@ if __name__ == "__main__":
         timings['match'].append(t_match)
         timings['pnp'].append(t_pnp)
         
-        if success:
+        if success and len(inliers) >= 6:
+            # Check reprojection error of inliers
+            inlier_points_3d = matched_3d[inliers.flatten()]
+            inlier_points_2d = matched_2d[inliers.flatten()]
+            
+            projected, _ = cv2.projectPoints(inlier_points_3d, rvec, tvec, K_cv, dist_coeffs)
+            reproj_errors = np.linalg.norm(inlier_points_2d - projected.squeeze(), axis=1)
+            median_reproj_error = np.median(reproj_errors)
+            
+            # Reject if median reprojection error too high
+            if median_reproj_error > 5.0:
+                rejected_reproj_error += 1
+                continue
+            
             R_cam, _ = cv2.Rodrigues(rvec)
             C_colmap = -R_cam.T @ tvec.flatten()
             C_meters = GroundTruthParams.colmap_to_meters(C_colmap, scale, R, t)
+            
+            # Accept localization
             C_gt = gt_poses[frame_name]
             error_meters = np.linalg.norm(C_meters - C_gt)
             
             errors.append(error_meters)
             match_counts.append(len(inliers))
+            previous_C = C_meters
             
             if (i + 1) % 20 == 0:
                 print(f"Frame {i+1}/{len(test_frames)}: "
                       f"Error={error_meters:.3f}m, "
                       f"Matches={len(inliers)}/{len(matched_3d)}")
                 MemoryMonitor.print_memory(f"After {i+1} frames")
+        else:
+            rejected_low_inliers += 1
+
+    print(f"Total test frames available: {len(test_frames)}")
+    print(f"Frames with GT: {sum(1 for f in test_frames if os.path.basename(f) in gt_poses)}")
     
     print("\n" + "="*60)
     print("INT8 vs FP32 MAP RESULTS")
@@ -239,6 +269,9 @@ if __name__ == "__main__":
         np.savez('results/fr1_int8_errors.npz',
              errors=np.array(errors),
              match_counts=np.array(match_counts),
+             timings_extract=np.array(timings['extract']),
+             timings_match=np.array(timings['match']),
+             timings_pnp=np.array(timings['pnp']),
              success_rate=len(errors)/len(test_frames))
         print("✓ Saved errors to results/fr1_int8_errors.npz")
     
