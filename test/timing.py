@@ -4,9 +4,9 @@ import os
 
 def plot_timing_breakdown():
     """
-    Generate timing breakdown figure (stacked bar chart).
+    Generate timing breakdown figure (grouped bar chart).
     Shows feature extraction, matching, and PnP times on Raspberry Pi.
-    Compares FP32, INT8, and SIFT.
+    Side-by-side bars make component comparison clear.
     """
     
     print("Loading timing data from Raspberry Pi experiments...")
@@ -79,50 +79,85 @@ def plot_timing_breakdown():
     
     print("="*60)
     
-    # Create stacked bar chart
-    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+    # ========== GROUPED BAR CHART ==========
+    fig, ax = plt.subplots(1, 1, figsize=(14, 6))
     
-    methods = list(stats.keys())
-    x_pos = np.arange(len(methods))
+    # Focus on FR1 only for clarity (FR3 FP32 is too slow and compresses scale)
+    methods = ['FP32', 'INT8', 'SIFT']
+    components = ['Feature\nExtraction', 'Descriptor\nMatching', 'PnP\nRANSAC', 'Total\nPipeline']
     
-    extract_times = [stats[m]['extract'] for m in methods]
-    match_times = [stats[m]['match'] for m in methods]
-    pnp_times = [stats[m]['pnp'] for m in methods]
+    # Prepare data
+    fp32_times = [stats['FR1 FP32']['extract'], stats['FR1 FP32']['match'], 
+                  stats['FR1 FP32']['pnp'], stats['FR1 FP32']['total']]
+    int8_times = [stats['FR1 INT8']['extract'], stats['FR1 INT8']['match'], 
+                  stats['FR1 INT8']['pnp'], stats['FR1 INT8']['total']]
+    sift_times = [stats['FR1 SIFT']['extract'], stats['FR1 SIFT']['match'], 
+                  stats['FR1 SIFT']['pnp'], stats['FR1 SIFT']['total']]
     
-    # Stacked bars
-    bar_width = 0.65
-    p1 = ax.bar(x_pos, extract_times, bar_width, label='Feature Extraction', 
-                color='steelblue', edgecolor='black', linewidth=1.2)
-    p2 = ax.bar(x_pos, match_times, bar_width, bottom=extract_times, 
-                label='Descriptor Matching', color='orange', edgecolor='black', linewidth=1.2)
-    p3 = ax.bar(x_pos, pnp_times, bar_width, 
-                bottom=np.array(extract_times) + np.array(match_times),
-                label='PnP RANSAC', color='lightgreen', edgecolor='black', linewidth=1.2)
+    x = np.arange(len(components))
+    width = 0.25
     
-    # Add total time and FPS annotations on top of bars
-    for i, method in enumerate(methods):
-        total = stats[method]['total']
-        fps = stats[method]['fps']
-        ax.text(i, total + 3, f'{total:.1f} ms\n{fps:.1f} FPS', 
-                ha='center', va='bottom', fontsize=10, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.8))
+    # Create bars
+    bars1 = ax.bar(x - width, fp32_times, width, label='XFeat-FP32', 
+                   color='steelblue', edgecolor='black', linewidth=1.2)
+    bars2 = ax.bar(x, int8_times, width, label='XFeat-INT8', 
+                   color='orange', edgecolor='black', linewidth=1.2)
+    bars3 = ax.bar(x + width, sift_times, width, label='SIFT', 
+                   color='green', edgecolor='black', linewidth=1.2)
     
-    # Add horizontal line at 42ms (24 FPS threshold)
-    ax.axhline(y=42, color='red', linestyle='--', linewidth=2, alpha=0.7, 
-               label='24 FPS threshold (42ms)')
-    ax.text(len(methods)-0.5, 44, '24 FPS', fontsize=10, color='red', 
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    # Add value labels on bars
+    def add_labels(bars, values):
+        for bar, val in zip(bars, values):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 1.5,
+                   f'{val:.1f}',
+                   ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    add_labels(bars1, fp32_times)
+    add_labels(bars2, int8_times)
+    add_labels(bars3, sift_times)
+    
+    # Add FPS annotations for Total Pipeline
+    total_idx = 3
+    for i, (method, bar_offset) in enumerate(zip(['FP32', 'INT8', 'SIFT'], [-width, 0, width])):
+        fps = stats[f'FR1 {method}']['fps']
+        y_pos = stats[f'FR1 {method}']['total']
+        ax.text(total_idx + bar_offset, y_pos + 10, f'{fps:.1f} FPS',
+               ha='center', va='bottom', fontsize=8, style='italic',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
+    
+    # Add 24 FPS threshold line (only on Total Pipeline section)
+    ax.plot([2.5, 3.5], [42, 42], 'r--', linewidth=2.5, alpha=0.8, label='24 FPS threshold')
+    ax.text(3.5, 43, '42ms', fontsize=9, color='red', ha='left', va='bottom',
+           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+    
+    # Add speedup annotations
+    # Feature extraction speedup
+    extract_speedup = fp32_times[0] / int8_times[0]
+    ax.annotate(f'{extract_speedup:.1f}×', 
+                xy=(0, max(fp32_times[0], int8_times[0])), 
+                xytext=(0, max(fp32_times[0], int8_times[0]) + 15),
+                ha='center', fontsize=10, color='red', fontweight='bold',
+                arrowprops=dict(arrowstyle='<->', color='red', lw=1.5))
+    
+    # Total speedup
+    total_speedup = fp32_times[3] / int8_times[3]
+    ax.annotate(f'{total_speedup:.1f}× speedup', 
+                xy=(3, max(fp32_times[3], int8_times[3])), 
+                xytext=(3, max(fp32_times[3], int8_times[3]) + 15),
+                ha='center', fontsize=10, color='red', fontweight='bold',
+                arrowprops=dict(arrowstyle='<->', color='red', lw=1.5))
     
     # Formatting
-    ax.set_ylabel('Time per Frame (ms)', fontsize=13)
-    ax.set_xlabel('Method', fontsize=13)
-    ax.set_title('Localization Pipeline Timing Breakdown (Raspberry Pi 5)', 
+    ax.set_ylabel('Time per Frame (ms)', fontsize=13, fontweight='bold')
+    ax.set_xlabel('Pipeline Component', fontsize=13, fontweight='bold')
+    ax.set_title('Localization Pipeline Timing Breakdown on Raspberry Pi 5 (FR1 Dataset)', 
                 fontsize=14, fontweight='bold')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(methods, fontsize=11)
-    ax.legend(fontsize=11, loc='upper left')
+    ax.set_xticks(x)
+    ax.set_xticklabels(components, fontsize=11)
+    ax.legend(fontsize=11, loc='center left', bbox_to_anchor=(1.02, 0.5), framealpha=0.95)
     ax.grid(axis='y', alpha=0.3, linestyle='--')
-    ax.set_ylim(0, max([stats[m]['total'] for m in methods]) * 1.2)
+    ax.set_ylim(0, max(max(fp32_times), max(int8_times), max(sift_times)) * 1.25)
     
     plt.tight_layout()
     plt.savefig('results/figure4_timing_breakdown.png', dpi=300, bbox_inches='tight')
@@ -131,22 +166,25 @@ def plot_timing_breakdown():
     print("\n✓ Saved: results/figure4_timing_breakdown.png")
     print("✓ Saved: results/figure4_timing_breakdown.pdf")
     
-    # Generate LaTeX table
+    # Generate LaTeX table (FR1 only for main paper)
     print("\n" + "="*60)
-    print("TABLE DATA FOR LATEX")
+    print("TABLE DATA FOR LATEX (FR1 only)")
     print("="*60)
     print("Method      | Extract | Match | PnP  | Total | FPS")
     print("------------|---------|-------|------|-------|-----")
-    for method in methods:
+    for method in ['FR1 FP32', 'FR1 INT8', 'FR1 SIFT']:
+        if method not in stats:
+            continue
         s = stats[method]
-        print(f"{method:11} | {s['extract']:6.2f}  | {s['match']:5.2f} | "
+        method_short = method.replace('FR1 ', '')
+        print(f"{method_short:11} | {s['extract']:6.2f}  | {s['match']:5.2f} | "
               f"{s['pnp']:4.2f} | {s['total']:5.2f} | {s['fps']:4.2f}")
     
-    # Speedup table
+    # Speedup analysis
+    print("\n" + "="*60)
+    print("SPEEDUP ANALYSIS (FP32 → INT8)")
+    print("="*60)
     if 'FR1 FP32' in stats and 'FR1 INT8' in stats:
-        print("\n" + "="*60)
-        print("SPEEDUP ANALYSIS")
-        print("="*60)
         fp32 = stats['FR1 FP32']
         int8 = stats['FR1 INT8']
         print(f"Component        | FP32    | INT8    | Speedup")
@@ -155,6 +193,15 @@ def plot_timing_breakdown():
         print(f"Matching         | {fp32['match']:6.2f}  | {int8['match']:6.2f}  | {fp32['match']/int8['match']:.2f}x")
         print(f"PnP              | {fp32['pnp']:6.2f}  | {int8['pnp']:6.2f}  | {fp32['pnp']/int8['pnp']:.2f}x")
         print(f"TOTAL            | {fp32['total']:6.2f}  | {int8['total']:6.2f}  | {fp32['total']/int8['total']:.2f}x")
+    
+    # FR3 data (for supplementary/appendix)
+    if 'FR3 FP32' in stats and 'FR3 INT8' in stats:
+        print("\n" + "="*60)
+        print("FR3 DATA (for appendix/text)")
+        print("="*60)
+        for method in ['FR3 FP32', 'FR3 INT8']:
+            s = stats[method]
+            print(f"{method}: {s['total']:.2f} ms ({s['fps']:.2f} FPS)")
 
 if __name__ == "__main__":
     os.makedirs('results', exist_ok=True)
