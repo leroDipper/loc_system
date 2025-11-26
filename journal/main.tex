@@ -1,4 +1,6 @@
 \documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
 
 % ----------------------------------------------------------
 % PACKAGES
@@ -10,6 +12,9 @@
 \usepackage{float}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{cite}
 
 % ----------------------------------------------------------
 % TITLE
@@ -90,22 +95,94 @@ By focusing on the interplay between algorithmic design, numerical precision, da
 
 \subsection{Model Optimization for Embedded Deployment}
 
-\subsection{Visual Localization on Resource-Constrained Platforms}
+\subsection{Map Optimisation Techniques}
+
+
+\subsection{Visual Localisation on Resource-Constrained Platforms}
 \newpage
 % ----------------------------------------------------------
 % 3. METHODOLOGY
 % ----------------------------------------------------------
-\section{Methodology}
+\section{Bridging the Computational Gap}
 
-\subsection{System Overview}
 
-\subsection{Feature-Based Localization Pipeline}
+The objective of achieving real-time, robust performance on resource-constrained hardware, specifically the Raspberry Pi, requires a strategic focus on data efficiency and computational bottlenecks. These devices are inherently limited by clock speed, restricted memory (RAM), thermal constraints, and reliance on general-purpose CPUs, necessitating algorithmic choices optimised for minimal computational intensity and memory footprint. 
 
-\subsubsection{Feature Extraction}
+Resource-constrained visual localisation operates within an inescapable trade-off defined by Accuracy, Latency, and Resource Consumption (memory and power)~\cite{benali2022edge}. Traditional Scale-Invariant Feature Transform (SIFT)~\cite{loweDistinctiveImageFeatures2004} provides high accuracy but is computationally expensive, while highly efficient binary descriptors like Oriented FAST and Rotated BRIEF (ORB)~\cite{rubleeORBEfficientAlternative2011} often sacrifice the robustness required for wide-baseline matching. ORB demonstrates two orders of magnitude speedup over SIFT while maintaining comparable accuracy in many scenarios~\cite{rubleeORBEfficientAlternative2011}, making it suitable for mobile and embedded systems. Conversely, modern deep-learning (DL) features such as SuperPoint~\cite{detoneSuperPointSelfSupervisedInterest2018} and D2-Net~\cite{dusmanuD2NetTrainableCNN2019} offer superior robustness but typically impose prohibitive computational requirements~\cite{lim2025lightweight}. 
 
-\subsubsection{Feature Matching}
+Efficient localisation requires efficient techniques for map querying in the event that maps grow larger. Vocabulary trees~\cite{nister2006scalable} provide hierarchical quantisation that enables sub-second retrieval times even for databases with millions of images, significantly reducing search complexity compared to exhaustive matching. Optimised map storage and representation are also important because localisation pipelines built on modest hardware can suffer from lack of scalability that stops them from working for long-term situations ~\cite{benali2022edge}.
 
-\subsubsection{Pose Estimation}
+In this section, we discuss design decisions that can be taken to address these challenges and reduce computational demands, while maintaining accuracy and scalability.
+
+
+
+
+
+
+
+
+\subsection{System Overview: Feature-Based Localisation Pipeline}
+
+The developed pipeline comprises four main components: feature extraction, feature matching, pose estimation, and mapping. These components are split between offline (map building) and online (localisation) modes.
+
+\begin{enumerate}
+
+\item \textbf{Feature Extraction:} Keypoints and their corresponding descriptors are detected within images. The computational impact of this component depends on internal factors such as the number of features extracted and the image resolution. Feature extraction is performed in both offline and online phases. During the online phase, the component is optimised to meet on-device resource constraints for query-time inference. During the offline phase, features are extracted from images used to construct the pre-built map, where resource constraints are relaxed to enable highly representative map construction.
+
+\item \textbf{Feature Matching:} Keypoint descriptors are matched by calculating distances between descriptor vectors. Matching robustness is ensured through techniques such as Lowe's ratio test and RANSAC-based geometric verification. Matching occurs in both offline and online stages. In the online stage, query image descriptors are matched against the map database descriptors. In the offline stage, features are matched across image sequences to establish correspondences for map construction.
+
+\item \textbf{Pose Estimation:} Camera poses are estimated from matched correspondences using geometric algorithms. During online localization, PnP with RANSAC estimates the query camera pose from 2D-3D correspondences. During offline mapping, camera poses are incrementally estimated as part of the SfM reconstruction pipeline.
+
+\item \textbf{Mapping:} A sparse 3D map of the environment is constructed offline using Structure-from-Motion (SfM) techniques implemented via COLMAP. The map contains 3D points associated with their corresponding descriptors and observability information. The mapping pipeline integrates feature extraction, feature matching, and incremental pose estimation. Bundle adjustment is employed to jointly refine the 3D structure and camera poses by minimising reprojection errors across multiple views.
+
+\end{enumerate}
+
+\subsection{Feature Extraction}
+
+Feature extraction represents a critical computational bottleneck in embedded visual localisation systems. Early evaluations demonstrated that feature extractor choice significantly impacts repeatability and matching accuracy ~\cite{klippenstein2007quantitative}, while recent hybrid SLAM systems show that learned features improve robustness in challenging environments, though at increased computational cost ~\cite{zhang2024slslam}.
+
+For this study, we focus on SIFT and XFeat as representative hand-crafted and learned extractors. SIFT remains the standard for structure-from-motion pipelines, ensuring compatibility with existing map databases. While binary descriptors like ORB offer computational advantages, they are incompatible with SIFT-based maps and preclude further optimisation through quantisation. In contrast, XFeat's continuous descriptor space enables post-training quantisation for embedded deployment.
+
+Feature extraction presents a multi-objective optimisation problem balancing computational load against localisation accuracy:
+
+\[
+\begin{aligned}
+\min_{N} \quad & T_{\text{total}}(N) = T_{\text{extract}}(N) + T_{\text{match}}(N) + T_{\text{pnp}}(N) \\
+\min_{N} \quad & E_{\text{loc}}(N)
+\end{aligned}
+\]
+
+
+
+
+where $N$ denotes the number of features extracted per frame, $T_{\text{total}}$ is the end-to-end localisation latency, and $E_{\text{loc}}$ is the localisation error. This captures the fundamental tension: more features improve matching accuracy but increase processing time beyond what resource-constrained platforms can sustain.
+
+Figure~\ref{fig:feature_variation} demonstrates this trade-off on the Technical University of Munich (TUM) fr1/desk2 sequence. As feature count increases, localisation accuracy improves but frame rate decreases, with diminishing returns beyond $N \approx 200$. This exploration informed our selection of $N=200$ for embedded deployment.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{images/feature_variation.pdf}
+\caption{Feature count trade-off on development platform (Intel i5, CPU). Increasing features improves accuracy but reduces speed, with optimal balance near $N=200$ features.}
+\label{fig:feature_variation}
+\end{figure}
+
+
+
+
+
+
+\subsection{Efficient Feature Matching}
+The feature matching component in the online localisation phase is responsible for establishing correspondences between query image descriptors and the pre-built map database descriptors. The most straightforward approach is exhaustive nearest neighbor search, which computes distances between each query descriptor and all map descriptors. This has a complexity of $O(M \cdot N)$, where $M$ is the number of map descriptors and $N$ is the number of query descriptors. While simple to implement, exhaustive search becomes computationally prohibitive as map size grows, making it unsuitable for resource-constrained platforms.
+
+To accelerate matching, we employ hierarchical vocabulary trees [cite], 
+which organize map descriptors into a k-ary tree structure. Query 
+descriptors traverse the tree from root to leaf, comparing only against 
+cluster centers at each level, reducing complexity to $O(N\cdot log_K=M)$.
+
+
+
+
+\subsection{Pose Estimation}
 
 \subsection{Map Construction}
 
