@@ -1,4 +1,7 @@
 colmap exhaustive_matcher \
     --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr1/colmap_int8/database_fr1_onnx.db \
     --FeatureMatching.use_gpu 0
-    
+
+colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/database_mh_01.db \
+--FeatureMatching.use_gpu 0
+

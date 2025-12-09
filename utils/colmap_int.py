@@ -1,16 +1,33 @@
+#!/usr/bin/env python3
 """
-1colmap_integration_int8.py
-
-
+XFeat feature extraction and COLMAP database creation
+Works with rectified images
 """
 
-import onnxruntime as ort
+import torch
 import cv2
 import numpy as np
 import os
 import sqlite3
 from pathlib import Path
 import yaml
+
+
+def load_camera_params_from_yaml(yaml_path):
+    """
+    Load camera parameters from YAML file
+    
+    Returns:
+        camera_params: np.array([width, height, fx, fy, cx, cy])
+    """
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    
+    width, height = data['resolution']
+    fx, fy, cx, cy = data['intrinsics']
+    
+    return np.array([width, height, fx, fy, cx, cy], dtype=np.float64)
+
 
 def xfeat_to_colmap_format(keypoints, descriptors, scores=None):
     """
@@ -134,7 +151,9 @@ def add_camera_to_db(db_path, camera_id, width, height, fx, fy, cx, cy):
     
     conn.commit()
     conn.close()
-    print(f"Added camera {camera_id}: PINHOLE {width}x{height}, fx={fx}, fy={fy}, cx={cx}, cy={cy}")
+    print(f"Added camera {camera_id}: PINHOLE {width}x{height}")
+    print(f"  fx={fx:.6f}, fy={fy:.6f}")
+    print(f"  cx={cx:.6f}, cy={cy:.6f}")
 
 
 def add_image_to_db(db_path, image_id, image_name, camera_id, keypoints, descriptors):
@@ -170,27 +189,32 @@ def add_image_to_db(db_path, image_id, image_name, camera_id, keypoints, descrip
     conn.close()
 
 
-def extract_and_populate_database(dataset_path, db_path, camera_params, onnx_model_path):
+def extract_and_populate_database(dataset_path, db_path, camera_params):
     """
-    Extract INT8 XFeat features and populate COLMAP database
+    Extract XFeat features and populate COLMAP database
     
     Args:
         dataset_path: Path to directory containing images
         db_path: Path to output COLMAP database
-        camera_params: dict with keys: width, height, fx, fy, cx, cy
-        onnx_model_path: Path to INT8 ONNX model
+        camera_params: np.array([width, height, fx, fy, cx, cy])
     """
-    # Initialize ONNX Runtime
-    print(f"Loading INT8 ONNX model: {onnx_model_path}")
-    session = ort.InferenceSession(onnx_model_path, providers=['CPUExecutionProvider'])
-    print(f"✓ INT8 model loaded")
+    # Initialize XFeat
+    print("Loading XFeat model...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        xfeat = torch.hub.load('verlab/accelerated_features', 'XFeat', pretrained=True, top_k=4096)
+        xfeat = xfeat.to(device)
+        xfeat.eval()
+        print(f"XFeat loaded on {device}")
+    except Exception as e:
+        print(f"Error loading XFeat model: {e}")
+        return
     
     # Get image paths
     image_paths = []
-    for f in os.listdir(dataset_path):
-        if f.lower().endswith(('.png', '.jpg', '.jpeg')):
-            image_paths.append(os.path.join(dataset_path, f))
-    image_paths.sort()
+    for ext in ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG']:
+        image_paths.extend(Path(dataset_path).glob(ext))
+    image_paths = sorted(image_paths)
     print(f"Found {len(image_paths)} images")
     
     if len(image_paths) == 0:
@@ -205,71 +229,35 @@ def extract_and_populate_database(dataset_path, db_path, camera_params, onnx_mod
     
     # Add camera
     camera_id = 1
-    add_camera_to_db(
-        db_path, 
-        camera_id,
-        camera_params['width'],
-        camera_params['height'],
-        camera_params['fx'],
-        camera_params['fy'],
-        camera_params['cx'],
-        camera_params['cy']
-    )
+    width, height, fx, fy, cx, cy = camera_params
+    add_camera_to_db(db_path, camera_id, int(width), int(height), fx, fy, cx, cy)
     
     # Process each image
-    print("\nExtracting INT8 features...")
+    print("\nExtracting features...")
     for idx, image_path in enumerate(image_paths):
         image_id = idx + 1
-        image_name = os.path.basename(image_path)
+        image_name = image_path.name
         
         # Read image
-        img_gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if img_gray is None:
+        img = cv2.imread(str(image_path))
+        if img is None:
             print(f"Warning: Could not read {image_path}")
             continue
         
-        # Preprocess for ONNX
-        img_input = img_gray.astype(np.float32)
-        img_input = np.expand_dims(img_input, axis=0)
-        img_input = np.expand_dims(img_input, axis=0)  # [1, 1, H, W]
+        # Check image size matches camera params
+        if img.shape[1] != int(width) or img.shape[0] != int(height):
+            print(f"Warning: {image_name} size mismatch! Expected {int(width)}x{int(height)}, got {img.shape[1]}x{img.shape[0]}")
+            continue
+            
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Extract features using INT8 ONNX model
-        feats, keypoints_logits, heatmap = session.run(None, {'input': img_input})
+        # Extract features
+        with torch.no_grad():
+            output = xfeat.detectAndCompute(img_gray, top_k=2000)
         
-        # feats: [1, 64, H/8, W/8] - dense descriptors
-        # keypoints_logits: [1, 65, H/8, W/8] - keypoint logits
-        # heatmap: [1, 1, H/8, W/8] - reliability
-        
-        # Convert to sparse keypoints (simplified - use grid sampling)
-        # For COLMAP, we need sparse keypoints with descriptors
-        B, C, H, W = feats.shape
-        
-        # Sample keypoints on a grid (simplified approach)
-        top_k = 4000
-        y_coords = np.repeat(np.arange(H), W)
-        x_coords = np.tile(np.arange(W), H)
-        
-        # Get heatmap scores
-        heat_flat = heatmap[0, 0].flatten()
-        
-        # Select top-k by heatmap score
-        if len(heat_flat) > top_k:
-            top_indices = np.argpartition(heat_flat, -top_k)[-top_k:]
-        else:
-            top_indices = np.arange(len(heat_flat))
-        
-        # Get keypoint positions (scale to image coordinates)
-        kpts_x = x_coords[top_indices] * 8  # Scale to image size
-        kpts_y = y_coords[top_indices] * 8
-        keypoints = np.stack([kpts_x, kpts_y], axis=1).astype(np.float32)
-        
-        # Get descriptors at those locations
-        feats_flat = feats[0].reshape(64, -1).T  # [H*W, 64]
-        descriptors = feats_flat[top_indices]
-        
-        # L2 normalize descriptors
-        norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
-        descriptors = descriptors / (norms + 1e-8)
+        features = output[0]
+        keypoints = features['keypoints'].cpu().numpy()
+        descriptors = features['descriptors'].cpu().numpy()
         
         # Convert to COLMAP format
         colmap_kpts, colmap_desc = xfeat_to_colmap_format(keypoints, descriptors)
@@ -282,32 +270,42 @@ def extract_and_populate_database(dataset_path, db_path, camera_params, onnx_mod
     print(f"\n✓ Database created successfully!")
     print(f"  Path: {db_path}")
     print(f"  Images: {len(image_paths)}")
-    print(f"  Camera: PINHOLE {camera_params['width']}x{camera_params['height']}")
+    print(f"  Camera: PINHOLE {int(width)}x{int(height)}")
+    print(f"\nNext steps:")
+    print(f"  1. Run COLMAP feature matcher:")
+    print(f"     colmap exhaustive_matcher --database_path {db_path}")
+    print(f"  2. Run COLMAP mapper:")
+    print(f"     colmap mapper --database_path {db_path} --image_path {dataset_path} --output_path <output_dir>")
 
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr1/images'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test/resources/tum_fr1/colmap_int8'
-    onnx_model = '/home/leroy-marewangepo/accelerated_features/resources/models/xfeat_640x480_int8.onnx'
-    camera_params_yaml = 'resources/tum_fr1/camera_params.yaml'
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01'
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'database_fr1_onnx.db')
+    db_path = os.path.join(output_dir, 'database_mh_01.db')
     
-    # Load camera parameters
-    with open(camera_params_yaml, 'r') as f:
-        params = yaml.safe_load(f)
+    # Load camera parameters from YAML (rectified images)
+    yaml_path = os.path.join(dataset_path, 'camera_rectified.yaml')
     
-    camera_params = {
-        'width': params['resolution'][0],
-        'height': params['resolution'][1],
-        'fx': params['intrinsics'][0],
-        'fy': params['intrinsics'][1],
-        'cx': params['intrinsics'][2],
-        'cy': params['intrinsics'][3]
-    }
+    if not os.path.exists(yaml_path):
+        print(f"ERROR: Camera parameter file not found: {yaml_path}")
+        print("Please run rectify_and_resize.py first!")
+        exit(1)
+    
+    camera_params = load_camera_params_from_yaml(yaml_path)
+    
+    print("=" * 60)
+    print("COLMAP DATABASE CREATION WITH XFEAT")
+    print("=" * 60)
+    print(f"Dataset path: {dataset_path}")
+    print(f"Database path: {db_path}")
+    print(f"Camera parameters from: {yaml_path}")
+    print(f"  Resolution: {int(camera_params[0])}x{int(camera_params[1])}")
+    print(f"  Intrinsics: fx={camera_params[2]:.2f}, fy={camera_params[3]:.2f}, cx={camera_params[4]:.2f}, cy={camera_params[5]:.2f}")
+    print()
     
     # Run extraction and database creation
-    extract_and_populate_database(dataset_path, db_path, camera_params, onnx_model)
+    extract_and_populate_database(dataset_path, db_path, camera_params)
