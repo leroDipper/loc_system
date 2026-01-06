@@ -31,3 +31,16 @@ journal/images
 
 /sift_stuff
 
+.vscode/
+__pycache__/
+*.db
+*.bag
+*.log
+*.pt
+*.pth
+*.onnx
+data/
+build/
+devel/
+
+.vscode/
