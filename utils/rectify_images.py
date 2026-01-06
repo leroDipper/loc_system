@@ -9,9 +9,9 @@ import yaml
 from pathlib import Path
 
 # ==================== CONFIGURATION ====================
-INPUT_DIR = "/home/leroy-marewangepo/Downloads/MH_01_easy/mav0/cam0/data"
-OUTPUT_DIR = "/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images"
-SENSOR_YAML = "/home/leroy-marewangepo/Downloads/MH_01_easy/mav0/cam0/sensor.yaml"
+INPUT_DIR = "/home/leroy-marewangepo/Downloads/MH_03_medium/mav0/cam0/data"
+OUTPUT_DIR = "/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03/images"
+SENSOR_YAML = "/home/leroy-marewangepo/Downloads/MH_03_medium/mav0/cam0/sensor.yaml"
 # =======================================================
 
 

@@ -253,7 +253,7 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         
         # Extract features
         with torch.no_grad():
-            output = xfeat.detectAndCompute(img_gray, top_k=2000)
+            output = xfeat.detectAndCompute(img_gray, top_k=500)
         
         features = output[0]
         keypoints = features['keypoints'].cpu().numpy()
@@ -280,12 +280,12 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01'
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03'
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'database_mh_01.db')
+    db_path = os.path.join(output_dir, 'database_mh_03_500f.db')
     
     # Load camera parameters from YAML (rectified images)
     yaml_path = os.path.join(dataset_path, 'camera_rectified.yaml')

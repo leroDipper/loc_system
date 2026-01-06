@@ -1,0 +1,35 @@
+{
+    "ROS2.distro": "jazzy",
+    "python.autoComplete.extraPaths": [
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/install/xfeat_interfaces/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/build/frontend_xfeat",
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/install/frontend_xfeat/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/vloco_ros_ws/install/xfeat_interfaces/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/vloco_ros_ws/install/frontend_xfeat/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/a2_ws/build/pole_pkg",
+        "/home/leroy-marewangepo/a2_ws/install/pole_pkg/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/a2_ws/build/gazebo_polecart_ros",
+        "/home/leroy-marewangepo/a2_ws/install/gazebo_polecart_ros/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/ros2_ws/build/my_py_pkg",
+        "/home/leroy-marewangepo/ros2_ws/install/my_py_pkg/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/ros2_ws/build/a1_pkg",
+        "/home/leroy-marewangepo/ros2_ws/install/a1_pkg/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/install/xfeat_interfaces/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/build/frontend_xfeat",
+        "/home/leroy-marewangepo/OneDrive/Masters/vloco_ros_ws/install/frontend_xfeat/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/vloco_ros_ws/install/xfeat_interfaces/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/vloco_ros_ws/install/frontend_xfeat/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/a2_ws/build/pole_pkg",
+        "/home/leroy-marewangepo/a2_ws/install/pole_pkg/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/a2_ws/build/gazebo_polecart_ros",
+        "/home/leroy-marewangepo/a2_ws/install/gazebo_polecart_ros/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/ros2_ws/build/my_py_pkg",
+        "/home/leroy-marewangepo/ros2_ws/install/my_py_pkg/lib/python3.12/site-packages",
+        "/home/leroy-marewangepo/ros2_ws/build/a1_pkg",
+        "/home/leroy-marewangepo/ros2_ws/install/a1_pkg/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ]
+}

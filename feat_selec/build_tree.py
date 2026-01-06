@@ -41,7 +41,10 @@ class VocabTreeBuilder:
         if is_leaf:
             return node_id
         
-        kmeans = KMeans(n_clusters=self.n_branches, max_iter=20, n_init=1, verbose=0)
+        kmeans = KMeans(n_clusters=self.n_branches,
+            max_iter=100,
+            n_init=5,
+            random_state=0)
         labels = kmeans.fit_predict(descriptors)
         
         for cluster_id in range(self.n_branches):
@@ -88,11 +91,10 @@ class VocabTreeBuilder:
                 np.array([node.node_id], dtype=np.int32).tofile(f)
 
 
-       
 
 
 if __name__ == "__main__":
-    data = np.load('resources/tum_fr3/map_databases/tumfr3_map_train_pruned40.npz')
+    data = np.load('resources/mh_01/raw_feat/mh01_features_xfeat.npz')
     map_descriptors = data['descriptors'].astype(np.float32)
     
     n_branches = 10
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     
     builder = VocabTreeBuilder(n_branches, depth, descriptor_dim)
     builder.build(map_descriptors)
-    builder.save('resources/tum_fr3/vocabularies/vocab_tree_40_pruned.bin')
+    builder.save('resources/mh_01/raw_feat/mh01_features_tree.bin')
     
     vocab = builder.get_vocabulary()
     print(f"Vocabulary: {vocab.shape}")
