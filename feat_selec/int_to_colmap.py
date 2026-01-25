@@ -11,6 +11,7 @@ import os
 import sqlite3
 from pathlib import Path
 import yaml
+import pandas as pd
 
 
 def load_camera_params_from_yaml(yaml_path):
@@ -189,37 +190,18 @@ def add_image_to_db(db_path, image_id, image_name, camera_id, keypoints, descrip
     conn.close()
 
 
-def extract_and_populate_database(dataset_path, db_path, camera_params):
-    """
-    Extract XFeat features and populate COLMAP database
-    
-    Args:
-        dataset_path: Path to directory containing images
-        db_path: Path to output COLMAP database
-        camera_params: np.array([width, height, fx, fy, cx, cy])
-    """
-    # Initialize XFeat
-    print("Loading XFeat model...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    try:
-        xfeat = torch.hub.load('verlab/accelerated_features', 'XFeat', pretrained=True, top_k=4096)
-        xfeat = xfeat.to(device)
-        xfeat.eval()
-        print(f"XFeat loaded on {device}")
-    except Exception as e:
-        print(f"Error loading XFeat model: {e}")
-        return
-    
-    # Get image paths
-    image_paths = []
-    for ext in ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG']:
-        image_paths.extend(Path(dataset_path).glob(ext))
-    image_paths = sorted(image_paths)
-    print(f"Found {len(image_paths)} images")
-    
-    if len(image_paths) == 0:
-        print("No images found!")
-        return
+def extract_and_populate_database(dataset_path, db_path, camera_params, pruned_data):
+
+    unique_names = np.unique(pruned_data['image_names'])
+    image_names = np.sort(unique_names)
+
+    # Get corresponding IDs
+    image_ids = []
+    for name in image_names:
+        idx = np.where(pruned_data['image_names'] == name)[0][0]
+        image_ids.append(pruned_data['image_ids'][idx])
+    image_ids = np.array(image_ids)
+        
     
     # Create database
     print(f"\nCreating database at {db_path}")
@@ -234,30 +216,17 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
     
     # Process each image
     print("\nExtracting features...")
-    for idx, image_path in enumerate(image_paths):
-        image_id = idx + 1
-        image_name = image_path.name
+    for i in range(len(image_names)):
+        image_id = int(image_ids[i])
+        image_name = str(image_names[i])
+    
         
-        # Read image
-        img = cv2.imread(str(image_path))
-        if img is None:
-            print(f"Warning: Could not read {image_path}")
-            continue
-        
-        # Check image size matches camera params
-        if img.shape[1] != int(width) or img.shape[0] != int(height):
-            print(f"Warning: {image_name} size mismatch! Expected {int(width)}x{int(height)}, got {img.shape[1]}x{img.shape[0]}")
-            continue
-            
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Extract features
-        with torch.no_grad():
-            output = xfeat.detectAndCompute(img_gray, top_k=2000)
-        
-        features = output[0]
-        keypoints = features['keypoints'].cpu().numpy()
-        descriptors = features['descriptors'].cpu().numpy()
+        mask = pruned_data['image_names'] == image_name
+        keypoints = pruned_data['keypoints'][mask]
+        descriptors = pruned_data['descriptors'][mask]
+
+        print(f"{i}/{len(image_names)} {image_name}: {len(keypoints)} features")
+
         
         # Convert to COLMAP format
         colmap_kpts, colmap_desc = xfeat_to_colmap_format(keypoints, descriptors)
@@ -265,11 +234,10 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         # Add to database
         add_image_to_db(db_path, image_id, image_name, camera_id, colmap_kpts, colmap_desc)
         
-        print(f"  [{image_id}/{len(image_paths)}] {image_name}: {len(keypoints)} keypoints")
+       
     
     print(f"\n✓ Database created successfully!")
     print(f"  Path: {db_path}")
-    print(f"  Images: {len(image_paths)}")
     print(f"  Camera: PINHOLE {int(width)}x{int(height)}")
     print(f"\nNext steps:")
     print(f"  1. Run COLMAP feature matcher:")
@@ -280,22 +248,29 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images_small'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01'
-
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1'
+    
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'mh_01_small.db')
+    db_path = os.path.join(output_dir, 'tum_fr1_prune.db')
     
     # Load camera parameters from YAML (rectified images)
-    yaml_path = 'resources/mh_01/images/camera_rectified.yaml'
-    
+    yaml_path = 'resources/tum_fr1/camera_params.yaml'
+
+
     if not os.path.exists(yaml_path):
         print(f"ERROR: Camera parameter file not found: {yaml_path}")
         print("Please run rectify_and_resize.py first!")
         exit(1)
-    
+
     camera_params = load_camera_params_from_yaml(yaml_path)
+
+    pruned_data = np.load("resources/tum_fr1/map_databases/tum_fr1_features_pruned.npz", allow_pickle=True)
+
+
+
+    extract_and_populate_database(dataset_path, db_path, camera_params, pruned_data)
     
     print("=" * 60)
     print("COLMAP DATABASE CREATION WITH XFEAT")
@@ -307,5 +282,4 @@ if __name__ == "__main__":
     print(f"  Intrinsics: fx={camera_params[2]:.2f}, fy={camera_params[3]:.2f}, cx={camera_params[4]:.2f}, cy={camera_params[5]:.2f}")
     print()
     
-    # Run extraction and database creation
-    extract_and_populate_database(dataset_path, db_path, camera_params)
+    

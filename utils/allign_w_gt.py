@@ -193,8 +193,8 @@ def main():
     
     # Paths (update these to your actual paths)
     gt_path = 'resources/tum_fr1/groundtruth.txt'
-    colmap_path = 'sift_stuff/tum_fr1/project_files/images.txt'
-    output_dir = 'sift_stuff/tum_fr1'
+    colmap_path = 'resources/tum_fr1/sparse_text/images.txt'
+    output_dir = 'resources/tum_fr1'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -267,7 +267,7 @@ def main():
         'std_alignment_error_meters': float(np.std(errors))
     }
     
-    output_path = Path(output_dir) / 'colmap_to_gt_transform.json'
+    output_path = Path(output_dir) / 'colmap_to_gt_transform_prune_na.json'
     with open(output_path, 'w') as f:
         json.dump(transform_data, f, indent=2)
     

@@ -94,16 +94,16 @@ class VocabTreeBuilder:
 
 
 if __name__ == "__main__":
-    data = np.load('resources/mh_01/raw_feat/mh01_features_xfeat.npz')
-    map_descriptors = data['descriptors'].astype(np.float32)
+    data = np.load('resources/tum_fr1/raw_feat/tum_fr1_features_xfeat.npz')
+    raw_descriptors = data['descriptors'].astype(np.float32)
     
     n_branches = 10
     depth = 4
-    descriptor_dim = map_descriptors.shape[1]
+    descriptor_dim = raw_descriptors.shape[1]
     
     builder = VocabTreeBuilder(n_branches, depth, descriptor_dim)
-    builder.build(map_descriptors)
-    builder.save('resources/mh_01/raw_feat/mh01_features_tree.bin')
+    builder.build(raw_descriptors)
+    builder.save('resources/tum_fr1/raw_feat/tum_fr1_features_tree.bin')
     
     vocab = builder.get_vocabulary()
     print(f"Vocabulary: {vocab.shape}")

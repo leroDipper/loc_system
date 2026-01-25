@@ -14,15 +14,14 @@ def load_ground_truth(gt_path):
     """
     Load ground truth trajectory from EUROC MAV format.
     
-    Format: timestamp tx ty tz qx qy qz qw
+    Format: timestamp tx ty tz qw qx qy qz
     
     Returns:
-        dict: {timestamp: (position, quaternion)}
+        dict: {timestamp_in_seconds: (position, quaternion)}
     """
     gt_data = {}
     df = pd.read_csv(gt_path, comment='#', header=None)
     
-
     timestamps = df.iloc[:, 0].values
     tx = df.iloc[:, 1].values
     ty = df.iloc[:, 2].values
@@ -34,11 +33,14 @@ def load_ground_truth(gt_path):
 
     for i in range(len(timestamps)):
         timestamp = int(timestamps[i])
+        # Convert nanosecond timestamp to seconds
+        timestamp_sec = timestamp / 1e9
+        
         tx_, ty_, tz_ = float(tx[i]), float(ty[i]), float(tz[i])
         qx_, qy_, qz_, qw_ = float(qx[i]), float(qy[i]), float(qz[i]), float(qw[i])
         position = np.array([tx_, ty_, tz_])
         quaternion = np.array([qx_, qy_, qz_, qw_])
-        gt_data[timestamp] = (position, quaternion)
+        gt_data[timestamp_sec] = (position, quaternion)
     return gt_data
 
 
@@ -82,10 +84,13 @@ def extract_timestamp_from_filename(filename):
     Extract timestamp from TUM RGB-D filename.
     Example: '1305031523.092297.png' -> 1305031523.092297
     """
-    # Remove extension and convert to float
     name_without_ext = Path(filename).stem
     try:
-        return float(name_without_ext)
+        timestamp = float(name_without_ext)
+        # If timestamp is very large (>1e12), it's likely nanoseconds
+        if timestamp > 1e12:
+            return timestamp / 1e9  # Convert to seconds
+        return timestamp
     except ValueError:
         return None
 
@@ -197,8 +202,8 @@ def main():
     
     # Paths (update these to your actual paths)
     gt_path = 'resources/mh_01/data.csv'
-    colmap_path = 'resources/mh_01/project_files/images.txt'
-    output_dir = 'resources/mh_01'
+    colmap_path = 'resources/mh_01/colmap_files/images.txt'
+    output_dir = 'resources/mh_01/colmap_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -271,7 +276,7 @@ def main():
         'std_alignment_error_meters': float(np.std(errors))
     }
     
-    output_path = Path(output_dir) / 'colmap_to_gt_transform.json'
+    output_path = Path(output_dir) / 'colmap_to_gt_transform_int8.json'
     with open(output_path, 'w') as f:
         json.dump(transform_data, f, indent=2)
     

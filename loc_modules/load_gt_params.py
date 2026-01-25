@@ -2,6 +2,7 @@ import json
 import numpy as np
 import os
 import yaml
+import pandas as pd
 
 
 class GroundTruthParams:
@@ -86,6 +87,63 @@ class GroundTruthParams:
         print(f"Loaded ground truth for {len(gt_by_image)} images")
         return gt_by_image
     
+
+
+    @staticmethod
+    def load_euroc_ground_truth_by_image(gt_csv_path, image_dir, max_time_diff_ns=2e7):
+        """
+        Load EuRoC ground truth and associate with camera images.
+
+        Args:
+            gt_csv_path: path to mav0/state_groundtruth_estimate0/data.csv
+            image_dir: path to mav0/cam0/data
+            max_time_diff_ns: max allowed timestamp diff (default 20ms)
+
+        Returns:
+            dict: {image_name: position_xyz}
+        """
+        # ----------------------------
+        # Load ground truth
+        # ----------------------------
+        gt_data = {}
+
+        df = pd.read_csv(gt_csv_path, comment='#') 
+
+        timestamps = df.iloc[:, 0].astype(np.int64).values
+        tx = df.iloc[:, 1].values
+        ty = df.iloc[:, 2].values
+        tz = df.iloc[:, 3].values
+
+        for i in range(len(timestamps)):
+            ts = timestamps[i]
+            gt_data[ts] = np.array([tx[i], ty[i], tz[i]])
+
+        gt_timestamps = np.array(list(gt_data.keys()))
+
+        # ----------------------------
+        # Associate images
+        # ----------------------------
+        gt_by_image = {}
+
+        image_files = sorted(os.listdir(image_dir))
+
+        for image_file in image_files:
+            if not image_file.endswith(".png"):
+                continue
+
+            # Image filename is timestamp (nanoseconds)
+            img_ts = int(os.path.splitext(image_file)[0])
+
+            # Find closest GT timestamp
+            idx = np.argmin(np.abs(gt_timestamps - img_ts))
+            closest_ts = gt_timestamps[idx]
+
+            if abs(closest_ts - img_ts) <= max_time_diff_ns:
+                gt_by_image[image_file] = gt_data[closest_ts]
+
+        print(f"Loaded ground truth for {len(gt_by_image)} images")
+        return gt_by_image
+
 
     @staticmethod
     def load_camera_params(yaml_path):

@@ -50,7 +50,7 @@ if __name__ == "__main__":
     test_dataset_path = 'resources/tum_fr3/images'
 
     # Load existing vocabulary (built with FP32)
-    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/tum_fr3/vocabularies/vocab_tree.bin'
     print("Loaded existing vocabulary")
 
     # Load existing FP32 map
@@ -58,6 +58,12 @@ if __name__ == "__main__":
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
+
+
+    print(f"Loaded FP32 map: {len(map_3d_points)} points")
+    print(f"Map descriptor dtype: {map_descriptors.dtype}")
+    print(f"Map descriptor range: [{map_descriptors.min():.4f}, {map_descriptors.max():.4f}]")
+    print(f"Map descriptor sample: {map_descriptors[0][:5]}")
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -137,6 +143,7 @@ if __name__ == "__main__":
         # Process outputs to get sparse features (top 100)
         B, C, H, W = feats.shape
         
+       
         # Get heatmap scores and select top-k
         heat_flat = heatmap[0, 0].flatten()
         top_k = 200

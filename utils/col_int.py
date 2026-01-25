@@ -189,7 +189,7 @@ def add_image_to_db(db_path, image_id, image_name, camera_id, keypoints, descrip
     conn.close()
 
 
-def extract_and_populate_database(dataset_path, db_path, camera_params):
+def extract_and_populate_database(dataset_path, db_path, camera_params, save_float_descriptors=True):
     """
     Extract XFeat features and populate COLMAP database
     
@@ -197,6 +197,7 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         dataset_path: Path to directory containing images
         db_path: Path to output COLMAP database
         camera_params: np.array([width, height, fx, fy, cx, cy])
+        save_float_descriptors: If True, save L2-normalized float32 descriptors to NPZ
     """
     # Initialize XFeat
     print("Loading XFeat model...")
@@ -232,6 +233,9 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
     width, height, fx, fy, cx, cy = camera_params
     add_camera_to_db(db_path, camera_id, int(width), int(height), fx, fy, cx, cy)
     
+    # Storage for float descriptors (for vocab tree)
+    float_descriptors_data = {}
+    
     # Process each image
     print("\nExtracting features...")
     for idx, image_path in enumerate(image_paths):
@@ -253,11 +257,19 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         
         # Extract features
         with torch.no_grad():
-            output = xfeat.detectAndCompute(img_gray, top_k=2000)
+            output = xfeat.detectAndCompute(img_gray, top_k=500)
         
         features = output[0]
         keypoints = features['keypoints'].cpu().numpy()
         descriptors = features['descriptors'].cpu().numpy()
+        
+        # L2 normalize for vocab tree (keep as float32)
+        desc_float = descriptors.astype(np.float32)
+        desc_float = desc_float / (np.linalg.norm(desc_float, axis=1, keepdims=True) + 1e-8)
+        
+        # Store float descriptors
+        if save_float_descriptors:
+            float_descriptors_data[image_name] = desc_float
         
         # Convert to COLMAP format
         colmap_kpts, colmap_desc = xfeat_to_colmap_format(keypoints, descriptors)
@@ -266,6 +278,12 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         add_image_to_db(db_path, image_id, image_name, camera_id, colmap_kpts, colmap_desc)
         
         print(f"  [{image_id}/{len(image_paths)}] {image_name}: {len(keypoints)} keypoints")
+    
+    # Save float descriptors to NPZ
+    if save_float_descriptors and float_descriptors_data:
+        npz_path = str(Path(db_path).parent / "float_descriptors.npz")
+        np.savez_compressed(npz_path, **float_descriptors_data)
+        print(f"\n✓ Saved float32 descriptors to {npz_path}")
     
     print(f"\n✓ Database created successfully!")
     print(f"  Path: {db_path}")
@@ -280,15 +298,15 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images_small'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01'
-
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03'
+    
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'mh_01_small.db')
+    db_path = os.path.join(output_dir, 'database_mh_03_500f.db')
     
     # Load camera parameters from YAML (rectified images)
-    yaml_path = 'resources/mh_01/images/camera_rectified.yaml'
+    yaml_path = os.path.join(dataset_path, 'camera_rectified.yaml')
     
     if not os.path.exists(yaml_path):
         print(f"ERROR: Camera parameter file not found: {yaml_path}")

@@ -11,6 +11,7 @@ import os
 import sqlite3
 from pathlib import Path
 import yaml
+from loc_modules.onnx_feat import onnx_extractor
 
 
 def load_camera_params_from_yaml(yaml_path):
@@ -189,7 +190,7 @@ def add_image_to_db(db_path, image_id, image_name, camera_id, keypoints, descrip
     conn.close()
 
 
-def extract_and_populate_database(dataset_path, db_path, camera_params):
+def extract_and_populate_database(dataset_path, db_path, camera_params, model_path):
     """
     Extract XFeat features and populate COLMAP database
     
@@ -198,17 +199,6 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
         db_path: Path to output COLMAP database
         camera_params: np.array([width, height, fx, fy, cx, cy])
     """
-    # Initialize XFeat
-    print("Loading XFeat model...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    try:
-        xfeat = torch.hub.load('verlab/accelerated_features', 'XFeat', pretrained=True, top_k=4096)
-        xfeat = xfeat.to(device)
-        xfeat.eval()
-        print(f"XFeat loaded on {device}")
-    except Exception as e:
-        print(f"Error loading XFeat model: {e}")
-        return
     
     # Get image paths
     image_paths = []
@@ -250,14 +240,10 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
             continue
             
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
         
-        # Extract features
-        with torch.no_grad():
-            output = xfeat.detectAndCompute(img_gray, top_k=2000)
+        keypoints, descriptors, t_extract = onnx_extractor(model_path, img_gray, top_k=2000)
         
-        features = output[0]
-        keypoints = features['keypoints'].cpu().numpy()
-        descriptors = features['descriptors'].cpu().numpy()
         
         # Convert to COLMAP format
         colmap_kpts, colmap_desc = xfeat_to_colmap_format(keypoints, descriptors)
@@ -285,7 +271,7 @@ if __name__ == "__main__":
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'mh_01_small.db')
+    db_path = os.path.join(output_dir, 'mh_01_quant.db')
     
     # Load camera parameters from YAML (rectified images)
     yaml_path = 'resources/mh_01/images/camera_rectified.yaml'
@@ -308,4 +294,4 @@ if __name__ == "__main__":
     print()
     
     # Run extraction and database creation
-    extract_and_populate_database(dataset_path, db_path, camera_params)
+    extract_and_populate_database(dataset_path, db_path, camera_params, model_path='models/xfeat_752x480_int8.onnx')

@@ -1,19 +1,18 @@
-"""
-main_tumfr1_int8.py
-
-Test INT8 ONNX model with existing FP32 map.
-"""
-
-import onnxruntime as ort
+import torch
 import os
 from accelerated_modules import vocab_tree_match
 from loc_modules.load_gt_params import GroundTruthParams
 import cv2
 import numpy as np
 import time
+import json
+from scipy.spatial.transform import Rotation
+from loc_modules import MapLoader, Localiser
 import yaml
 from test.memory import MemoryMonitor
 import glob
+from loc_modules.onnx_feat import onnx_extractor
+import onnxruntime as ort
 
 def load_camera_params(yaml_path):
     """Load camera parameters from YAML file."""
@@ -30,34 +29,39 @@ def load_camera_params(yaml_path):
     }
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr1/colmap_to_gt_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/tum_fr1/camera_params.yaml'
-    TUM_DATASET_PATH = 'resources/tum_fr1'
+    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/colmap_files/colmap_to_gt_transform_int8.json')
+    CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
+    EUROC_DATASET_PATH = 'resources/mh_01'
+    
 
-    gt_poses = GroundTruthParams.load_tum_ground_truth(
-        gt_file_path=os.path.join(TUM_DATASET_PATH, 'groundtruth.txt'),
-        rgb_file_path=os.path.join(TUM_DATASET_PATH, 'rgb.txt')
+    gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
+        gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
+        image_dir=os.path.join(EUROC_DATASET_PATH, 'images')
     )
+
 
     # Load INT8 ONNX model instead of PyTorch
     print("Loading INT8 ONNX model...")
-    int8_model_path = 'models/xfeat_640x480_int8.onnx'
-    session = ort.InferenceSession(int8_model_path, providers=['CPUExecutionProvider'])
-    print("✓ INT8 model loaded")
+    model='models/xfeat_752x480_int8.onnx'
+    session = ort.InferenceSession(model, providers=['CPUExecutionProvider'])
+    print("✓ model loaded")
 
     MemoryMonitor.print_memory("After loading INT8 ONNX model")
 
-    test_dataset_path = 'resources/tum_fr1/images'
 
-    # Load existing vocabulary (built with FP32)
-    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree_l2_pruned.bin'
+
+    test_dataset_path = 'resources/mh_01/images_small'
+
+    # Load existing vocabulary
+    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_mh_01_quant.bin'
     print("Loaded existing vocabulary")
 
-    # Load existing FP32 map
-    data = np.load('resources/tum_fr1/map_databases/tumfr1_map_train_l2.npz')
+    # Load colmap map
+    data = np.load('resources/mh_01/map_databases/mh_01_quant.npz')
+
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
-    print(f"Loaded FP32 map: {len(map_3d_points)} points")
+    print(f"Loaded map: {len(map_3d_points)} points")
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -71,7 +75,7 @@ if __name__ == "__main__":
                     [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
-    # Build matcher with FP32 map descriptors
+    # Build matcher
     print("\nBuilding vocabulary matcher...")
     t_start = time.time()
     matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
@@ -81,18 +85,34 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     # ===================================================================
-    # CONTINUOUS LOCALIZATION TEST - INT8 queries vs FP32 map
+    # CONTINUOUS LOCALIZATION TEST
     # ===================================================================
     print("\n" + "="*60)
-    print("INT8 QUERIES vs FP32 MAP - TUM FR1")
+    print("CONTINUOUS LOCALIZATION TEST - Mh")
     print("="*60)
     
-    # Get all test frames (skip first 500 used for map building)
-    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
-    test_frames = all_frames[500:]  # Use images after first 500
+    # Load registered images from COLMAP reconstruction
+    colmap_images_path = 'resources/mh_01/colmap_files/images.txt'
+    registered_images = []
+    with open(colmap_images_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.strip().split()
+            if len(parts) == 10:
+                registered_images.append(parts[9])
     
-    print(f"Map built with first 500 images (FP32)")
-    print(f"Testing with {len(test_frames)} remaining images (INT8)\n")
+    # Split into train/test based on registered images only
+    n_train = 0
+    test_image_names = set(registered_images[n_train:])
+    
+    # Get test frames - only those that were registered by COLMAP
+    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
+    test_frames = [f for f in all_frames if os.path.basename(f) in test_image_names]
+    
+    print(f"COLMAP registered: {len(registered_images)} images")
+    print(f"Train images: {n_train}")
+    print(f"Test images: {len(test_frames)}\n")
     
     errors = []
     match_counts = []
@@ -105,6 +125,7 @@ if __name__ == "__main__":
     pnp_failed = 0
     rejected_low_inliers = 0
     rejected_reproj_error = 0
+
 
     
     for i, frame_path in enumerate(test_frames):
@@ -119,48 +140,15 @@ if __name__ == "__main__":
         if frame is None:
             continue
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
         
-        # Preprocess for ONNX
-        t_start = time.time()
-        frame_input = frame_gray.astype(np.float32)
-        frame_input = np.expand_dims(frame_input, axis=0)
-        frame_input = np.expand_dims(frame_input, axis=0)
+        keypoints, descriptors, t_extract = onnx_extractor(session, frame_gray, top_k=200)
         
-        # Extract features using INT8 ONNX
-        feats, keypoints_logits, heatmap = session.run(None, {'input': frame_input})
-        t_extract = time.time() - t_start
-        
-        # Process outputs to get sparse features (top 100)
-        B, C, H, W = feats.shape
-        
-        # Get heatmap scores and select top-k
-        heat_flat = heatmap[0, 0].flatten()
-        top_k = 100
-        
-        if len(heat_flat) > top_k:
-            top_indices = np.argpartition(heat_flat, -top_k)[-top_k:]
-        else:
-            top_indices = np.arange(len(heat_flat))
-        
-        # Get keypoint positions
-        y_coords = np.repeat(np.arange(H), W)
-        x_coords = np.tile(np.arange(W), H)
-        kpts_x = x_coords[top_indices] * 8
-        kpts_y = y_coords[top_indices] * 8
-        keypoints = np.stack([kpts_x, kpts_y], axis=1).astype(np.float32)
-        
-        # Get descriptors
-        feats_flat = feats[0].reshape(64, -1).T
-        descriptors = feats_flat[top_indices]
-        
-        # L2 normalize
-        norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
-        descriptors = descriptors / (norms + 1e-8)
-        
-        # Convert to uint8 (to match map format)
+
+         # Convert descriptors to uint8 for matching
         descriptors = np.clip((descriptors + 0.5) * 255.0, 0, 255).astype(np.uint8)
         
-        # Match INT8 descriptors against FP32 map
+        # Match
         t_start = time.time()
         query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
         t_match = time.time() - t_start
@@ -239,7 +227,7 @@ if __name__ == "__main__":
     print(f"Frames with GT: {sum(1 for f in test_frames if os.path.basename(f) in gt_poses)}")
     
     print("\n" + "="*60)
-    print("INT8 vs FP32 MAP RESULTS")
+    print("CONTINUOUS LOCALIZATION RESULTS")
     print("="*60)
     print(f"Total frames attempted: {len(test_frames)}")
     print(f"Successful localizations: {len(errors)}")
@@ -266,14 +254,14 @@ if __name__ == "__main__":
         print(f"  Total:              {total_time*1000:.2f} ms")
         print(f"  Average FPS:        {1.0/total_time:.2f}")
 
-        np.savez('results/fr1_int8_errors.npz',
-             errors=np.array(errors),
-             match_counts=np.array(match_counts),
-             timings_extract=np.array(timings['extract']),
-             timings_match=np.array(timings['match']),
-             timings_pnp=np.array(timings['pnp']),
-             success_rate=len(errors)/len(test_frames))
-        print("✓ Saved errors to results/fr1_int8_errors.npz")
+        # np.savez('results/fr1_fp32_errors.npz', 
+        #     errors=np.array(errors),
+        #      match_counts=np.array(match_counts),
+        #      timings_extract=np.array(timings['extract']),
+        #      timings_match=np.array(timings['match']),
+        #      timings_pnp=np.array(timings['pnp']),
+        #      success_rate=len(errors)/len(test_frames))
+        # print("✓ Saved errors to results/fr1_fp32_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")
     

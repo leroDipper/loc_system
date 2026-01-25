@@ -58,7 +58,7 @@ def xfeat_to_colmap_format(keypoints, descriptors, scores=None):
 
 
 
-def collect_feature_rows(image_id, image_name, keypoints, descriptors):
+def collect_feature_rows(image_id, image_name, keypoints, descriptors, scores):
     """
     create a pandas DataFrame for keypoints and descriptors and image id
     """
@@ -69,7 +69,8 @@ def collect_feature_rows(image_id, image_name, keypoints, descriptors):
             "image_id": image_id,
             "image_name": image_name,
             "keypoint": keypoints[i],
-            "descriptor": descriptors[i]
+            "descriptor": descriptors[i],
+            "detector_scores": scores[i]
         })
 
     return rows
@@ -139,12 +140,15 @@ def extract_and_populate_database(dataset_path, camera_params):
         
         features = output[0]
         keypoints = features['keypoints'].cpu().numpy()
-        descriptors = features['descriptors'].cpu().numpy()
+        descriptors = features['descriptors'].cpu().numpy().astype(np.float32)
 
-         # Convert to COLMAP format
-        kpts, desc = xfeat_to_colmap_format(keypoints, descriptors)
+        
+        norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
+        descriptors = descriptors / (norms + 1e-8)
 
-        rows = collect_feature_rows(image_id, image_name, kpts, desc)
+        scores = features['scores'].cpu().numpy() 
+
+        rows = collect_feature_rows(image_id, image_name, keypoints, descriptors, scores)
         all_rows.extend(rows)
         
         
@@ -165,12 +169,14 @@ def save(npz_path, dataframe):
     image_names = dataframe['image_name'].to_numpy()
     keypoints = np.stack(dataframe['keypoint'].to_numpy())
     descriptors = np.stack(dataframe['descriptor'].to_numpy())
+    detector_scores = dataframe['detector_scores'].to_numpy()
     
     np.savez_compressed(npz_path,
                         image_ids=image_ids,
                         image_names=image_names,
                         keypoints=keypoints,
-                        descriptors=descriptors)
+                        descriptors=descriptors,
+                        detector_scores=detector_scores)
     
     print("Save complete.")
 
@@ -179,13 +185,13 @@ def save(npz_path, dataframe):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/raw_feat'
-    
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/raw_feat'
+    yaml_path = '/resources/tum_fr1'
     
     
     # Load camera parameters from YAML (rectified images)
-    yaml_path = os.path.join(dataset_path, 'camera_rectified.yaml')
+    yaml_path = 'resources/tum_fr1/camera_params.yaml'
     
     if not os.path.exists(yaml_path):
         print(f"ERROR: Camera parameter file not found: {yaml_path}")
@@ -203,7 +209,7 @@ if __name__ == "__main__":
     # Run extraction and database creation
     dataframe = extract_and_populate_database(dataset_path, camera_params)
 
-    save_path = os.path.join(output_dir, 'mh01_features_xfeat.npz')
+    save_path = os.path.join(output_dir, 'tum_fr1_features_xfeat.npz')
     save(save_path, dataframe)
 
 

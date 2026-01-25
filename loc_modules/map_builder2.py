@@ -41,58 +41,51 @@ class MapBuilder:
         print(f"Loaded {len(points)} 3D points")
         return points
 
-    def load_image_ids_and_descriptors(self, dataset_path, descriptors_path, train_images=None):
+    def load_image_ids_and_descriptors(self, dataset_path, float_descriptors_path, max_images=None):
         """
-        Load descriptors for images.
+        Load float32 L2-normalized descriptors from NPZ file.
         
         Args:
-            dataset_path: Path to images directory
-            descriptors_path: Path to descriptors directory
-            train_images: Optional set of image names to filter for (train set only)
+            dataset_path: Path to image directory (for getting image list)
+            float_descriptors_path: Path to NPZ file with float descriptors
+            max_images: Optional limit on number of images to load
         """
         dataset_path = Path(dataset_path)
-        descriptors_path = Path(descriptors_path)
-
+        
+        # Load float descriptors from NPZ
+        float_data = np.load(float_descriptors_path)
+        
         data = []
         image_files = list(dataset_path.glob("*.jpg")) + list(dataset_path.glob("*.png"))
         image_files = sorted(image_files)
-
-        # Filter to train images if specified
-        if train_images is not None:
-            image_files = [f for f in image_files if f.name in train_images]
-            print(f"Using {len(image_files)} train images for map building")
-
+        
+        # Limit to first N images if specified
+        if max_images is not None:
+            image_files = image_files[:max_images]
+            print(f"Using first {max_images} images for map building")
+        
         for img_path in image_files:
-            desc_path = descriptors_path / f"{img_path.name}_desc.txt"
-            if not desc_path.exists():
-                print(f"Warning: Missing descriptor for {img_path.name}")
+            img_name = img_path.name
+            
+            # Check if descriptors exist in NPZ
+            if img_name not in float_data:
+                print(f"Warning: Missing float descriptors for {img_name}")
                 continue
-
-            descriptors = []
-            with open(desc_path, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        descriptor_array = np.array([int(x) for x in line.split()])
-                        descriptors.append(descriptor_array)
+            
+            descriptors = float_data[img_name]
             
             data.append({
-                'image': img_path.name,
-                'descriptors': np.array(descriptors)
+                'image': img_name,
+                'descriptors': descriptors
             })
-
+        
         df = pd.DataFrame(data)
-        print(f"Loaded {len(data)} images with descriptors")
+        print(f"Loaded {len(data)} images with float32 descriptors")
         return df
 
-    def build_map_database(self, map_files, dataset_path, descriptors_path, save_to=None, train_images=None):
-        """
-        Build map database from COLMAP outputs.
-        
-        Args:
-            train_images: Optional set of image names to use for building map (excludes test set)
-        """
+    def build_map_database(self, map_files, dataset_path, float_descriptors_path, save_to=None, max_images=None):
         points = self.load_map_data(map_files)
-        df = self.load_image_ids_and_descriptors(dataset_path, descriptors_path, train_images)
+        df = self.load_image_ids_and_descriptors(dataset_path, float_descriptors_path, max_images)
         map_path = Path(map_files)
 
         images_data = {}
@@ -110,8 +103,6 @@ class MapBuilder:
         print(f"Loaded {len(images_data)} image mappings")
 
         map_3d_points, map_descriptors = [], []
-        skipped_test_images = 0
-        
         for point in points:
             if not point['track']:
                 continue
@@ -120,11 +111,6 @@ class MapBuilder:
             img_name = images_data.get(first_img_id)
 
             if not img_name:
-                continue
-
-            # Skip if this image is in test set
-            if train_images is not None and img_name not in train_images:
-                skipped_test_images += 1
                 continue
 
             img_row = df[df['image'] == img_name]
@@ -140,8 +126,6 @@ class MapBuilder:
         map_descriptors = np.array(map_descriptors, dtype=np.float32)
 
         print(f"\nBuilt map with {len(map_3d_points)} points")
-        if train_images:
-            print(f"Skipped {skipped_test_images} points from test images")
         print(f"3D points shape: {map_3d_points.shape}")
         print(f"Descriptors shape: {map_descriptors.shape}")
 

@@ -5,3 +5,23 @@ colmap exhaustive_matcher \
 colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03/database_mh_03_500f.db \
 --FeatureMatching.use_gpu 0
 
+
+ colmap sequential_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/tum_fr1_prune.db \
+--FeatureMatching.use_gpu 0
+
+
+colmap sequential_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/tum_fr1_2000.db \
+--FeatureMatching.use_gpu 0
+
+colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/tum_fr1_600.db \
+--FeatureMatching.use_gpu 0
+
+
+
+colmap sequential_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/mh_01_quant.db \
+--FeatureMatching.use_gpu 0
+
+/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/mh_01_quant.db
+
+
+
