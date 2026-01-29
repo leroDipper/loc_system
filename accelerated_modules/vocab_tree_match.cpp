@@ -137,6 +137,30 @@ class VocabTreeMatcher {
         }
     }
 
+    std::vector<int> find_k_nearest_leaves(const std::vector<float>& descriptor, int k) {
+    std::vector<std::pair<float, int>> leaf_distances;
+
+    for (const auto& node : nodes) {
+        if (node.is_leaf) {
+            float dist = compute_distance(descriptor, node.center);
+            leaf_distances.emplace_back(dist, node.node_id);
+        }
+
+    }
+
+    std::partial_sort(leaf_distances.begin(), 
+                      leaf_distances.begin() + std::min(k, (int)leaf_distances.size()), 
+                      leaf_distances.end());
+
+    std::vector<int> nearest_leaves;
+    for (int i = 0; i < std::min(k, (int)leaf_distances.size()); i++) {
+        nearest_leaves.push_back(leaf_distances[i].second);
+    }
+
+    return nearest_leaves;
+    }
+
+
     public:
         VocabTreeMatcher(const std::string& vocab_filename,
                  py::array_t<float> map_desc_np) {
@@ -161,7 +185,8 @@ class VocabTreeMatcher {
         build_inverted_index();
     }
 
-    py::tuple match(py::array_t<float> query_desc_np, float ratio_threshold = 0.80) {
+    py::tuple match(py::array_t<float> query_desc_np, float ratio_threshold = 0.80, int k_nearest_words = 1) {
+
         auto query_buf = query_desc_np.request();
         int n_query = query_buf.shape[0];
         float* query_ptr = (float*)query_buf.ptr;
@@ -176,13 +201,31 @@ class VocabTreeMatcher {
                 query_descriptor[j] = query_ptr[query_idx * dim + j];
             }
 
-            // Find leaf node for this query descriptor
-            int leaf_node_id = query_tree(query_descriptor);
-            const auto& candidates = word_groups[leaf_node_id];
+
+
+            std::vector<int> candidate_indices;
+
+            if (k_nearest_words == 1) {
+                int leaf_node_id = query_tree(query_descriptor);
+                candidate_indices = word_groups[leaf_node_id];
+            }
+            else {
+                auto nearest_leaves = find_k_nearest_leaves(query_descriptor, k_nearest_words);
+                std::unordered_set<int> unique_candidates;
+
+                for (int leaf_id : nearest_leaves) {
+                    for (int idx : word_groups[leaf_id]) {
+                        unique_candidates.insert(idx);
+                    }
+                }
+
+                candidate_indices.assign(unique_candidates.begin(), unique_candidates.end());
+
+            }
 
 
             // Check if we have candidates
-            if (candidates.size() < 2) continue;  // Need at least 2 for ratio test
+            if (candidate_indices.size() < 2) continue;  // Need at least 2 for ratio test
 
 
             // Find best and second-best among candidates
@@ -190,7 +233,7 @@ class VocabTreeMatcher {
             float second_best_dist = std::numeric_limits<float>::max();
             int best_idx = -1;
             
-            for (int map_idx : candidates) {
+            for (int map_idx : candidate_indices) {
                 float dist = compute_distance(query_descriptor, map_descriptors[map_idx]);
                 
                 if (dist < best_dist) {
@@ -245,7 +288,8 @@ PYBIND11_MODULE(vocab_tree_match, m) {
     py::class_<VocabTreeMatcher>(m, "VocabTreeMatcher")
         .def(py::init<const std::string&, py::array_t<float>>())
         .def("match", &VocabTreeMatcher::match,
-             py::arg("query_desc_np"), py::arg("ratio_threshold") = 0.80);
+             py::arg("query_desc_np"), py::arg("ratio_threshold") = 0.80,
+             py::arg("k_nearest_words") = 1);
 }
 
 

@@ -160,3 +160,51 @@ class GroundTruthParams:
             'cy': params['intrinsics'][3]
         }
 
+    @staticmethod
+    def load_iphone_ground_truth(colmap_images_txt, scale, R, t):
+        """
+        Load iPhone/COLMAP ground truth by transforming COLMAP poses to meters.
+        
+        Args:
+            colmap_images_txt: Path to COLMAP images.txt
+            scale: Scale factor from load_transformation()
+            R: Rotation matrix from load_transformation()
+            t: Translation vector from load_transformation()
+        
+        Returns:
+            dict: {image_name: position_xyz}
+        """
+        from scipy.spatial.transform import Rotation as Rot
+        
+        gt_poses = {}
+        
+        with open(colmap_images_txt, 'r') as f:
+            lines = f.readlines()
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            if line.startswith('#') or line == '':
+                i += 1
+                continue
+            
+            parts = line.split()
+            if len(parts) >= 10:
+                qw, qx, qy, qz = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+                tx, ty, tz = float(parts[5]), float(parts[6]), float(parts[7])
+                img_name = parts[9]
+                
+                # Convert to camera center in COLMAP coords
+                R_cam = Rot.from_quat([qx, qy, qz, qw]).as_matrix()
+                t_cam = np.array([tx, ty, tz])
+                C_colmap = -R_cam.T @ t_cam
+                
+                # Transform to meters
+                C_meters = scale * (R @ C_colmap) + t
+                gt_poses[img_name] = C_meters
+            
+            i += 2  # Skip points line
+        
+        print(f"Loaded ground truth for {len(gt_poses)} images")
+        return gt_poses

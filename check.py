@@ -1,8 +1,14 @@
-import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
-data = np.load('resources/tum_fr1/map_databases/tumfr1_map_train_pruned50.npz')
-desc = data['descriptors']
+df = pd.read_csv("results/feature_lifecycles.csv")
+survivors = df[df["survived"] == True]
 
-print(f"Shape: {desc.shape}")
-print(f"Unique descriptors: {len(np.unique(desc, axis=0))}")
-print(f"Descriptor sample:\n{desc[:5]}")
+print("Reprojection error statistics (survivors only):")
+print(survivors["reprojection_error"].describe())
+
+plt.hist(survivors["reprojection_error"], bins=50)
+plt.xlabel("Reprojection Error (pixels)")
+plt.ylabel("Count")
+plt.title("Reprojection Error Distribution (Inliers Only)")
+plt.show()
