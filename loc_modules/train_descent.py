@@ -1,9 +1,10 @@
 """
-Train match confidence model from lifecycle logs - Version 2
-Now includes reprojection error for better confidence gradations.
+Train match confidence model with geometric features - Version 3
 
-Learns: P(match is correct | descriptor distance, ratio test, vocab stats, geometry)
-Output: Logistic regression model saved to results/
+Learns: P(match is correct | descriptor features, geometric configuration)
+
+Input: uncertainty_with_geometry.csv (from tum_fr1_unc_geometric.py)
+Output: Logistic regression model with geometric features
 """
 
 import pandas as pd
@@ -18,69 +19,99 @@ import joblib
 import matplotlib.pyplot as plt
 import os
 
-# ============================================================================
-# 1. LOAD DATA
-# ============================================================================
-
 print("="*60)
-print("TRAINING MATCH CONFIDENCE MODEL v2")
+print("TRAINING MATCH CONFIDENCE MODEL v3 (WITH GEOMETRIC FEATURES)")
 print("="*60)
 
-df = pd.read_csv("results/feature_lifecycles.csv")
-print(f"\nLoaded {len(df)} feature lifecycles")
-
-# Filter: only features that got matched (have descriptor distance)
-df = df[df["best_match_distance"].notna()].copy()
-print(f"Features that reached matching: {len(df)}")
-
-# Check class balance
-n_survivors = df['survived'].sum()
-n_outliers = (~df['survived']).sum()
-print(f"\n  Survivors (inliers): {n_survivors} ({n_survivors/len(df)*100:.1f}%)")
-print(f"  Outliers:            {n_outliers} ({n_outliers/len(df)*100:.1f}%)")
+# Load data from localization run with geometric features
+df = pd.read_csv("results/uncertainty_with_geometry.csv")
+print(f"\nLoaded {len(df)} frames with geometric features")
+print(f"Columns: {list(df.columns)}")
 
 # ============================================================================
-# 2. PREPARE FEATURES
+# FEATURE ENGINEERING
 # ============================================================================
 
-feature_cols = [
-    "best_match_distance",      # Core signal
-    "ratio_test_value",          # Lowe's ratio
-    "n_candidates",              # Vocab ambiguity
-    "reprojection_error",        # Geometric consistency (NEW!)
-    "detector_score"             # XFeat confidence
+# We need to create per-frame targets and features
+# For training, we'll consider frames with low error as "good" configurations
+# and frames with high error as "bad" configurations
+
+# Define success threshold (e.g., error < 10cm = success)
+ERROR_THRESHOLD = 0.10  # meters
+
+df['success'] = (df['error_m'] < ERROR_THRESHOLD).astype(int)
+
+n_success = df['success'].sum()
+n_failure = (df['success'] == 0).sum()
+print(f"\nClass balance (using {ERROR_THRESHOLD*100:.0f}cm threshold):")
+print(f"  Success (<{ERROR_THRESHOLD*100:.0f}cm): {n_success} ({n_success/len(df)*100:.1f}%)")
+print(f"  Failure (≥{ERROR_THRESHOLD*100:.0f}cm): {n_failure} ({n_failure/len(df)*100:.1f}%)")
+
+# ============================================================================
+# SELECT FEATURES
+# ============================================================================
+
+# Per-match features (mean values per frame)
+match_features = [
+    "mean_ratio_test",
+    "mean_n_candidates",
+    "n_matches"
 ]
 
+# Geometric features (NEW!)
+geometric_features = [
+    "n_inliers",
+    "match_spread_normalized",
+    "match_std_x",
+    "match_std_y",
+    "depth_mean",
+    "depth_std",
+    "depth_relative_std",
+    "depth_range",
+    "n_quadrants_active",
+    "quadrant_entropy",
+    "mean_inverse_depth",
+    "condition_estimate"
+]
+
+# Combine all features
+all_features = match_features + geometric_features
+
+print(f"\nFeature set:")
+print(f"  Match features:     {len(match_features)}")
+print(f"  Geometric features: {len(geometric_features)}")
+print(f"  Total:              {len(all_features)}")
+
+# Check which features are available
+available_features = [f for f in all_features if f in df.columns]
+missing_features = [f for f in all_features if f not in df.columns]
+
+if missing_features:
+    print(f"\n⚠ Warning: Missing features: {missing_features}")
+    all_features = available_features
+
+print(f"\nUsing {len(all_features)} features:")
+for feat in all_features:
+    print(f"  - {feat}")
+
 # Extract features and target
-X = df[feature_cols].values
-y = df["survived"].astype(int).values
+X = df[all_features].values
+y = df["success"].values
 
-# Handle reprojection error properly:
-# - Outliers have inf or very large values (they were rejected by RANSAC)
-# - Replace inf/large values with a penalty value (e.g., 50 pixels)
-# - This preserves the outliers in the dataset while giving them high error
-reproj_idx = feature_cols.index("reprojection_error")
-reproj_errors = X[:, reproj_idx].copy()
-
-# Replace inf and extreme values with penalty
-reproj_errors = np.nan_to_num(reproj_errors, nan=50.0, posinf=50.0, neginf=50.0)
-reproj_errors = np.clip(reproj_errors, 0, 50.0)  # Clip to [0, 50] range
-X[:, reproj_idx] = reproj_errors
-
-print(f"\nReprojection error handling:")
-print(f"  Outliers (should have high error): {(~df['survived']).sum()}")
-print(f"  Mean error for outliers: {reproj_errors[y == 0].mean():.2f} px")
-print(f"  Mean error for inliers:  {reproj_errors[y == 1].mean():.2f} px")
-
-# Handle any remaining NaNs in other features
+# Handle NaN and inf values
 X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
-X = np.clip(X, -1e6, 1e6)  # Clip to reasonable range
 
-print(f"Feature matrix: {X.shape}")
+# Clip extreme values
+for i in range(X.shape[1]):
+    percentile_99 = np.percentile(X[:, i], 99)
+    percentile_1 = np.percentile(X[:, i], 1)
+    X[:, i] = np.clip(X[:, i], percentile_1, percentile_99)
+
+print(f"\nFeature matrix: {X.shape}")
 print(f"Target vector: {y.shape}")
 
 # ============================================================================
-# 3. TRAIN MODEL
+# TRAIN MODEL
 # ============================================================================
 
 # Split data
@@ -97,7 +128,8 @@ base_pipeline = Pipeline([
     ("clf", LogisticRegression(
         max_iter=1000,
         class_weight="balanced",
-        random_state=42
+        random_state=42,
+        C=1.0  # Can tune this
     ))
 ])
 
@@ -108,7 +140,7 @@ pipeline.fit(X_train, y_train)
 print("✓ Training complete")
 
 # ============================================================================
-# 4. EVALUATE
+# EVALUATE
 # ============================================================================
 
 # Predict probabilities
@@ -125,12 +157,12 @@ print(f"{'='*60}")
 print(f"AUC (train): {auc_train:.3f}")
 print(f"AUC (test):  {auc_test:.3f}")
 
-# Classification report (at 0.5 threshold)
+# Classification report
 preds = (probs_test > 0.5).astype(int)
 print(f"\nClassification Report (test set):")
-print(classification_report(y_test, preds, target_names=['Outlier', 'Inlier']))
+print(classification_report(y_test, preds, target_names=['Failure', 'Success']))
 
-# Get base model coefficients (from first fold of calibrated model)
+# Get base model coefficients
 base_model = pipeline.calibrated_classifiers_[0].estimator
 coef = base_model["clf"].coef_[0]
 intercept = base_model["clf"].intercept_[0]
@@ -138,64 +170,91 @@ intercept = base_model["clf"].intercept_[0]
 print(f"\n{'='*60}")
 print(f"LEARNED WEIGHTS (Base Model)")
 print(f"{'='*60}")
-print(f"{'Feature':30s} {'Weight':>10s}")
-print(f"{'-'*40}")
-for name, weight in zip(feature_cols, coef):
-    direction = "↑ confidence" if weight < 0 else "↓ confidence"
-    print(f"{name:30s} {weight:+10.4f}  {direction}")
+print(f"{'Feature':35s} {'Weight':>10s}")
+print(f"{'-'*45}")
+
+# Sort features by absolute weight
+feature_importance = list(zip(all_features, coef))
+feature_importance.sort(key=lambda x: abs(x[1]), reverse=True)
+
+for name, weight in feature_importance:
+    direction = "↓ confidence" if weight < 0 else "↑ confidence"
+    marker = "***" if abs(weight) > 0.5 else ("**" if abs(weight) > 0.3 else "*")
+    print(f"{name:35s} {weight:+10.4f}  {direction:15s} {marker}")
+
 print(f"\nIntercept: {intercept:.4f}")
 
+# Identify most important features
+print(f"\n{'='*60}")
+print(f"TOP 5 MOST IMPORTANT FEATURES")
+print(f"{'='*60}")
+for i, (name, weight) in enumerate(feature_importance[:5], 1):
+    print(f"{i}. {name:30s} (weight: {weight:+.3f})")
+
 # ============================================================================
-# 5. ANALYZE CONFIDENCE SPREAD
+# CORRELATION ANALYSIS
 # ============================================================================
 
 print(f"\n{'='*60}")
-print(f"CONFIDENCE DISTRIBUTION ANALYSIS")
+print(f"CORRELATION WITH ACTUAL ERROR")
 print(f"{'='*60}")
 
-# For inliers only, show confidence spread
-inlier_probs = probs_test[y_test == 1]
-print(f"\nInlier confidence statistics:")
-print(f"  Min:    {inlier_probs.min():.3f}")
-print(f"  25th:   {np.percentile(inlier_probs, 25):.3f}")
-print(f"  Median: {np.median(inlier_probs):.3f}")
-print(f"  75th:   {np.percentile(inlier_probs, 75):.3f}")
-print(f"  Max:    {inlier_probs.max():.3f}")
+from scipy.stats import pearsonr
 
-# Count how many in each confidence range
-ranges = [(0, 0.5), (0.5, 0.7), (0.7, 0.85), (0.85, 0.95), (0.95, 1.0)]
-print(f"\nInlier confidence distribution:")
-for low, high in ranges:
-    count = ((inlier_probs >= low) & (inlier_probs < high)).sum()
-    pct = count / len(inlier_probs) * 100
-    print(f"  [{low:.2f}, {high:.2f}): {count:4d} ({pct:5.1f}%)")
+# We need to get the actual test set indices properly
+# Since train_test_split was called with random_state=42, we can recreate the split
+from sklearn.model_selection import train_test_split as tts
+
+# Recreate the split just to get indices
+_, test_idx_split, _, _ = tts(
+    np.arange(len(df)), y, test_size=0.2, random_state=42, stratify=y
+)
+
+# Predicted uncertainty vs actual error
+predicted_uncertainty = 1.0 / (probs_test + 0.01)  # Higher uncertainty for lower confidence
+actual_errors = df.iloc[test_idx_split]['error_m'].values
+
+if len(predicted_uncertainty) == len(actual_errors):
+    r, p = pearsonr(predicted_uncertainty, actual_errors)
+    print(f"\nCorrelation (predicted uncertainty vs actual error):")
+    print(f"  Pearson r: {r:+.3f}")
+    print(f"  p-value:   {p:.2e}")
+    if p < 0.001:
+        print(f"  ✓ Highly significant correlation!")
+    elif p < 0.05:
+        print(f"  ✓ Significant correlation")
+    else:
+        print(f"  ✗ Not significant (p > 0.05)")
+else:
+    print(f"⚠ Cannot compute correlation (dimension mismatch)")
 
 # ============================================================================
-# 6. SAVE MODEL
+# SAVE MODEL
 # ============================================================================
 
 os.makedirs('results', exist_ok=True)
 
 model_data = {
     "model": pipeline,
-    "features": feature_cols,
+    "features": all_features,
     "auc_train": auc_train,
-    "auc_test": auc_test
+    "auc_test": auc_test,
+    "feature_importance": feature_importance
 }
 
 joblib.dump(model_data, "results/match_confidence_model.joblib")
 print(f"\n✓ Saved model to results/match_confidence_model.joblib")
 
 # ============================================================================
-# 7. VISUALIZE
+# VISUALIZE
 # ============================================================================
 
 fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
 # Plot 1: Confidence distributions
-axes[0, 0].hist(probs_test[y_test == 0], bins=30, alpha=0.6, label='Outliers', color='red')
-axes[0, 0].hist(probs_test[y_test == 1], bins=30, alpha=0.6, label='Inliers', color='green')
-axes[0, 0].set_xlabel('Predicted Confidence P(inlier)')
+axes[0, 0].hist(probs_test[y_test == 0], bins=20, alpha=0.6, label='Failure', color='red')
+axes[0, 0].hist(probs_test[y_test == 1], bins=20, alpha=0.6, label='Success', color='green')
+axes[0, 0].set_xlabel('Predicted Confidence P(success)')
 axes[0, 0].set_ylabel('Count')
 axes[0, 0].set_title('Confidence Distribution (Test Set)')
 axes[0, 0].legend()
@@ -205,12 +264,10 @@ axes[0, 0].grid(alpha=0.3)
 bins = np.linspace(0, 1, 11)
 bin_centers = (bins[:-1] + bins[1:]) / 2
 actual_rates = []
-bin_counts = []
 
 for i in range(len(bins) - 1):
     mask = (probs_test >= bins[i]) & (probs_test < bins[i+1])
     count = mask.sum()
-    bin_counts.append(count)
     if count > 0:
         actual_rates.append(y_test[mask].mean())
     else:
@@ -219,7 +276,7 @@ for i in range(len(bins) - 1):
 axes[0, 1].plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
 axes[0, 1].plot(bin_centers, actual_rates, 'o-', linewidth=2, markersize=8, label='Actual')
 axes[0, 1].set_xlabel('Predicted Confidence')
-axes[0, 1].set_ylabel('Actual Inlier Rate')
+axes[0, 1].set_ylabel('Actual Success Rate')
 axes[0, 1].set_title('Calibration Curve')
 axes[0, 1].legend()
 axes[0, 1].grid(alpha=0.3)
@@ -227,33 +284,39 @@ axes[0, 1].set_xlim(0, 1)
 axes[0, 1].set_ylim(0, 1)
 
 # Plot 3: Feature importances (absolute coefficients)
-abs_coef = np.abs(coef)
-sorted_idx = np.argsort(abs_coef)
-axes[1, 0].barh(range(len(feature_cols)), abs_coef[sorted_idx])
-axes[1, 0].set_yticks(range(len(feature_cols)))
-axes[1, 0].set_yticklabels([feature_cols[i] for i in sorted_idx])
+abs_coef = np.array([abs(w) for _, w in feature_importance])
+feat_names = [n for n, _ in feature_importance]
+
+# Take top 10
+top_n = min(10, len(abs_coef))
+axes[1, 0].barh(range(top_n), abs_coef[:top_n])
+axes[1, 0].set_yticks(range(top_n))
+axes[1, 0].set_yticklabels(feat_names[:top_n], fontsize=9)
 axes[1, 0].set_xlabel('|Coefficient|')
-axes[1, 0].set_title('Feature Importance')
+axes[1, 0].set_title('Top 10 Feature Importances')
 axes[1, 0].grid(axis='x', alpha=0.3)
+axes[1, 0].invert_yaxis()
 
-# Plot 4: Confidence vs Reprojection Error (for inliers only)
-inlier_mask = y_test == 1
-inlier_reproj = X_test[inlier_mask, reproj_idx]
-inlier_conf = probs_test[inlier_mask]
-
-axes[1, 1].scatter(inlier_reproj, inlier_conf, alpha=0.3, s=10)
-axes[1, 1].set_xlabel('Reprojection Error (pixels)')
-axes[1, 1].set_ylabel('Predicted Confidence')
-axes[1, 1].set_title('Confidence vs Reprojection Error (Inliers)')
-axes[1, 1].grid(alpha=0.3)
-axes[1, 1].set_xlim(0, 10)
+# Plot 4: Predicted uncertainty vs actual error (if available)
+if len(predicted_uncertainty) == len(actual_errors):
+    axes[1, 1].scatter(actual_errors * 100, predicted_uncertainty, alpha=0.5, s=20)
+    axes[1, 1].set_xlabel('Actual Error (cm)')
+    axes[1, 1].set_ylabel('Predicted Uncertainty (a.u.)')
+    axes[1, 1].set_title(f'Uncertainty vs Error (r={r:.3f}, p={p:.2e})')
+    axes[1, 1].grid(alpha=0.3)
+    axes[1, 1].set_xlim(0, max(20, np.percentile(actual_errors * 100, 95)))
+else:
+    axes[1, 1].text(0.5, 0.5, 'Correlation plot\nunavailable', 
+                    ha='center', va='center', fontsize=12)
+    axes[1, 1].set_xlim(0, 1)
+    axes[1, 1].set_ylim(0, 1)
 
 plt.tight_layout()
-plt.savefig('results/match_confidence_analysis_v2.png', dpi=150, bbox_inches='tight')
-print("✓ Saved visualization to results/match_confidence_analysis_v2.png")
+plt.savefig('results/match_confidence_geometric.png', dpi=150, bbox_inches='tight')
+print("✓ Saved visualization to results/match_confidence_geometric.png")
 
 plt.show()
 
 print(f"\n{'='*60}")
-print("DONE")
+print("DONE - MODEL WITH GEOMETRIC FEATURES")
 print(f"{'='*60}")

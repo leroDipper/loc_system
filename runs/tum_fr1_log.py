@@ -151,56 +151,93 @@ if __name__ == "__main__":
         # LOG: Stage 2 - Quantization
         logger.log_quantization(frame_features, descriptors)
         
-        # Match
+        
+        # Match - Use new match_with_stats method for real statistics
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80, k_nearest_words=4)
+        query_idx_all, map_idx_all, distances_all, ranks_all = matcher.match_with_stats(
+            descriptors, k_nearest_words=3
+        )
         t_match = time.time() - t_start
         
-        # LOG: Stage 4 - Matching (placeholder for vocab assignment - Stage 3)
-        # Note: We'll do vocab logging later when we expose it from matcher
-        word_ids = np.zeros(len(descriptors), dtype=np.int32)  # Placeholder
+        # LOG: Stage 3 - Vocab assignment (still placeholder)
+        word_ids = np.zeros(len(descriptors), dtype=np.int32)
         distances_to_center = np.zeros(len(descriptors))
         logger.log_vocab_assignment(frame_features, word_ids, distances_to_center)
         
-        # Build proper match statistics for logging
-        # Group matches by query index to find best and second-best
+        # Compute match statistics from ALL candidates
+        from collections import defaultdict
+        query_matches_all = defaultdict(list)
+        for q_idx, m_idx, dist, rank in zip(query_idx_all, map_idx_all, distances_all, ranks_all):
+            query_matches_all[q_idx].append((m_idx, dist, rank))
+        
+        # Compute statistics for each query (for logging)
         query_match_info = {}
-        for q_idx, m_idx, dist in zip(query_idx, map_idx, distances):
-            if q_idx not in query_match_info:
-                query_match_info[q_idx] = []
-            query_match_info[q_idx].append((m_idx, dist))
+        n_candidates_per_query = {}
         
-        # Sort each query's matches by distance
-        for q_idx in query_match_info:
-            query_match_info[q_idx].sort(key=lambda x: x[1])
+        for q_idx, matches in query_matches_all.items():
+            # Matches are already sorted by rank from C++
+            query_match_info[q_idx] = matches
+            n_candidates_per_query[q_idx] = len(matches)
         
-        # Count candidates per query (for uncertainty measure)
-        n_candidates_per_query = {q_idx: len(matches) for q_idx, matches in query_match_info.items()}
+        # Build arrays for logging (need all matches, not just best)
+        log_query_idx = []
+        log_map_idx = []
+        log_distances = []
         
-        # LOG: Matching stage
-        logger.log_matching(frame_features, query_idx, map_idx, distances, n_candidates_per_query)
+        for q_idx, matches in query_match_info.items():
+            for m_idx, dist, rank in matches:
+                log_query_idx.append(q_idx)
+                log_map_idx.append(m_idx)
+                log_distances.append(dist)
         
-        # Filter unique
-        query_to_map = {}
-        for q_idx, m_idx, dist in zip(query_idx, map_idx, distances):
-            if q_idx not in query_to_map or dist < query_to_map[q_idx][1]:
-                query_to_map[q_idx] = (m_idx, dist)
+        log_query_idx = np.array(log_query_idx)
+        log_map_idx = np.array(log_map_idx)
+        log_distances = np.array(log_distances)
         
-        # Build 2D-3D correspondences
+        # LOG: Matching stage with REAL statistics
+        logger.log_matching(frame_features, log_query_idx, log_map_idx, log_distances, n_candidates_per_query)
+        
+        # Now filter for PnP (apply ratio test in Python)
+        RATIO_THRESHOLD = 0.80
+        filtered_matches = {}
+        
+        for q_idx, matches in query_match_info.items():
+            if len(matches) == 0:
+                continue
+            
+            best_distance = matches[0][1]
+            best_map_idx = matches[0][0]
+            
+            # Ratio test
+            if len(matches) > 1:
+                second_best_distance = matches[1][1]
+                ratio = best_distance / (second_best_distance + 1e-8)
+            else:
+                ratio = 1.0  # Only 1 candidate, accept it
+            
+            if ratio < RATIO_THRESHOLD:
+                filtered_matches[q_idx] = (best_map_idx, best_distance)
+        
+        # Build 2D-3D correspondences from filtered matches
         matched_3d = []
         matched_2d = []
-        matched_query_indices = []  # Track which features were matched
-        for q_idx, (m_idx, dist) in query_to_map.items():
+        matched_query_indices = []
+        
+        for q_idx in sorted(filtered_matches.keys()):
+            m_idx, dist = filtered_matches[q_idx]
             matched_3d.append(map_3d_points[m_idx])
             matched_2d.append(keypoints[q_idx])
             matched_query_indices.append(q_idx)
         
-        if len(matched_3d) < 4:  # Need at least 4 points for PnP
+        if len(matched_3d) < 4:
             # LOG: Failed - too few matches
             logger.log_ransac(frame_features, np.array([]), np.array([]), None)
             logger.log_final_pose(frame_features, np.array([]), np.array([]), False)
             continue
-            
+
+
+
+
         matched_3d = np.array(matched_3d, dtype=np.float32)
         matched_2d = np.array(matched_2d, dtype=np.float32)
         matched_query_indices = np.array(matched_query_indices, dtype=np.int32)

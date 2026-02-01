@@ -1,13 +1,12 @@
 """
-Pose Uncertainty Estimation Module
+Pose Uncertainty Estimation Module - Version 2 (with Geometric Features)
 
 Converts match-level confidence scores into pose covariance using:
-1. ML model: match features → confidence p
+1. ML model: match features + geometric features → confidence p
 2. Uncertainty scaling: p → pixel uncertainty σ
 3. Covariance propagation: σ → pose covariance Σ
 
-Based on the factor graph formulation where measurement uncertainty
-is derived from learned match confidence.
+NEW: Now includes geometric quality features for improved uncertainty prediction.
 """
 
 import numpy as np
@@ -50,7 +49,7 @@ class PoseUncertaintyEstimator:
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"Model not found at {model_path}. "
-                f"Train it first using train_match_confidence_v2.py"
+                f"Train it first using train_descent_geometric.py"
             )
     
     def predict_match_confidence(
@@ -59,7 +58,8 @@ class PoseUncertaintyEstimator:
         ratio_test_values: np.ndarray,
         n_candidates: np.ndarray,
         reprojection_errors: np.ndarray,
-        detector_scores: np.ndarray
+        detector_scores: np.ndarray,
+        geometric_features: Optional[Dict] = None
     ) -> np.ndarray:
         """
         Predict confidence for each match using the ML model.
@@ -70,6 +70,7 @@ class PoseUncertaintyEstimator:
             n_candidates: Number of candidate matches per feature
             reprojection_errors: Geometric reprojection errors (pixels)
             detector_scores: XFeat detector confidence scores
+            geometric_features: Dict with global geometric quality features (NEW)
             
         Returns:
             confidence: Array of confidence scores [0, 1] for each match
@@ -79,6 +80,7 @@ class PoseUncertaintyEstimator:
         X = np.zeros((n_matches, len(self.feature_names)))
         
         for i, feat_name in enumerate(self.feature_names):
+            # Per-match features (used directly)
             if feat_name == "best_match_distance":
                 X[:, i] = best_match_distances
             elif feat_name == "ratio_test_value":
@@ -89,8 +91,30 @@ class PoseUncertaintyEstimator:
                 X[:, i] = reprojection_errors
             elif feat_name == "detector_score":
                 X[:, i] = detector_scores
+            
+            # Aggregate features computed from per-match data (broadcast to all matches)
+            elif feat_name == "mean_ratio_test":
+                X[:, i] = np.mean(ratio_test_values)
+            elif feat_name == "mean_n_candidates":
+                X[:, i] = np.mean(n_candidates)
+            elif feat_name == "n_matches":
+                X[:, i] = n_matches
+            elif feat_name == "n_inliers":
+                X[:, i] = n_matches  # Same as n_matches in this context
+            
+            # Global geometric features (broadcast to all matches)
+            elif geometric_features is not None:
+                # Remove 'geom_' prefix if present in model features
+                geom_key = feat_name.replace('geom_', '') if feat_name.startswith('geom_') else feat_name
+                
+                if geom_key in geometric_features:
+                    # Broadcast scalar feature to all matches
+                    X[:, i] = geometric_features[geom_key]
+                else:
+                    warnings.warn(f"Geometric feature '{geom_key}' not found, using zeros")
             else:
-                warnings.warn(f"Unknown feature: {feat_name}, using zeros")
+                # Model expects geometric features but none provided
+                warnings.warn(f"Feature '{feat_name}' not available, using zeros")
         
         # Handle missing values
         X = np.nan_to_num(X, nan=0.0, posinf=50.0, neginf=0.0)
@@ -180,7 +204,6 @@ class PoseUncertaintyEstimator:
         cy = camera_matrix[1, 2]
         
         # Build Jacobian matrix (2N x 6)
-        # Each point contributes 2 rows (u, v) with respect to 6 DOF pose
         J = np.zeros((2 * n_points, 6))
         
         for i in range(n_points):
@@ -188,7 +211,6 @@ class PoseUncertaintyEstimator:
             Z2 = Z * Z
             
             # Jacobian of projection w.r.t. camera-frame point
-            # u = fx * X/Z + cx, v = fy * Y/Z + cy
             du_dX = fx / Z
             du_dY = 0
             du_dZ = -fx * X / Z2
@@ -197,30 +219,25 @@ class PoseUncertaintyEstimator:
             dv_dY = fy / Z
             dv_dZ = -fy * Y / Z2
             
-            # Jacobian w.r.t. rotation (using small angle approximation)
-            # Rotation Jacobian: δX = [X]_× δω where [X]_× is skew-symmetric
-            # This gives: dX/dω = [0, Z, -Y; -Z, 0, X; Y, -X, 0]^T
+            # Jacobian w.r.t. rotation (small angle approximation)
+            J[2*i, 0] = du_dX * 0      + du_dY * Z      + du_dZ * (-Y)
+            J[2*i, 1] = du_dX * (-Z)   + du_dY * 0      + du_dZ * X
+            J[2*i, 2] = du_dX * Y      + du_dY * (-X)   + du_dZ * 0
             
-            # For rotation (ωx, ωy, ωz):
-            J[2*i, 0] = du_dX * 0      + du_dY * Z      + du_dZ * (-Y)  # ωx
-            J[2*i, 1] = du_dX * (-Z)   + du_dY * 0      + du_dZ * X     # ωy
-            J[2*i, 2] = du_dX * Y      + du_dY * (-X)   + du_dZ * 0     # ωz
+            J[2*i+1, 0] = dv_dX * 0    + dv_dY * Z      + dv_dZ * (-Y)
+            J[2*i+1, 1] = dv_dX * (-Z) + dv_dY * 0      + dv_dZ * X
+            J[2*i+1, 2] = dv_dX * Y    + dv_dY * (-X)   + dv_dZ * 0
             
-            J[2*i+1, 0] = dv_dX * 0    + dv_dY * Z      + dv_dZ * (-Y)  # ωx
-            J[2*i+1, 1] = dv_dX * (-Z) + dv_dY * 0      + dv_dZ * X     # ωy
-            J[2*i+1, 2] = dv_dX * Y    + dv_dY * (-X)   + dv_dZ * 0     # ωz
+            # Jacobian w.r.t. translation
+            J[2*i, 3]   = du_dX
+            J[2*i, 4]   = du_dY
+            J[2*i, 5]   = du_dZ
             
-            # For translation (tx, ty, tz):
-            J[2*i, 3]   = du_dX  # tx
-            J[2*i, 4]   = du_dY  # ty
-            J[2*i, 5]   = du_dZ  # tz
-            
-            J[2*i+1, 3] = dv_dX  # tx
-            J[2*i+1, 4] = dv_dY  # ty
-            J[2*i+1, 5] = dv_dZ  # tz
+            J[2*i+1, 3] = dv_dX
+            J[2*i+1, 4] = dv_dY
+            J[2*i+1, 5] = dv_dZ
         
-        # Build weight matrix (inverse covariance)
-        # W = diag(1/σ₁², 1/σ₁², 1/σ₂², 1/σ₂², ...)
+        # Build weight matrix
         weights = np.zeros(2 * n_points)
         for i in range(n_points):
             weights[2*i] = 1.0 / (pixel_uncertainties[i] ** 2)
@@ -239,7 +256,6 @@ class PoseUncertaintyEstimator:
             covariance = np.linalg.pinv(H)
         
         # Compute diagnostics
-        # Reprojection for verification
         points_proj_homo = camera_matrix @ points_camera.T
         points_proj = (points_proj_homo[:2, :] / points_proj_homo[2, :]).T
         reprojection_errors = np.linalg.norm(points_2d - points_proj, axis=1)
@@ -248,10 +264,12 @@ class PoseUncertaintyEstimator:
             "n_points": n_points,
             "mean_pixel_uncertainty": np.mean(pixel_uncertainties),
             "median_pixel_uncertainty": np.median(pixel_uncertainties),
+            "std_pixel_uncertainty": np.std(pixel_uncertainties),
             "mean_reprojection_error": np.mean(reprojection_errors),
+            "median_reprojection_error": np.median(reprojection_errors),
             "condition_number": np.linalg.cond(H),
-            "rotation_uncertainty": np.sqrt(np.diag(covariance[:3, :3])),  # Angular uncertainty (radians)
-            "translation_uncertainty": np.sqrt(np.diag(covariance[3:, 3:])),  # Translation uncertainty (meters)
+            "rotation_uncertainty": np.sqrt(np.diag(covariance[:3, :3])),
+            "translation_uncertainty": np.sqrt(np.diag(covariance[3:, 3:]))
         }
         
         return covariance, info
@@ -268,6 +286,7 @@ class PoseUncertaintyEstimator:
         n_candidates: np.ndarray,
         reprojection_errors: np.ndarray,
         detector_scores: np.ndarray,
+        geometric_features: Optional[Dict] = None,  # NEW
         filter_low_confidence: bool = True
     ) -> Dict:
         """
@@ -284,6 +303,7 @@ class PoseUncertaintyEstimator:
             n_candidates: Number of candidates per match
             reprojection_errors: Geometric errors
             detector_scores: XFeat confidence scores
+            geometric_features: Dict with global geometric features (NEW)
             filter_low_confidence: Whether to filter out low-confidence matches
             
         Returns:
@@ -294,13 +314,14 @@ class PoseUncertaintyEstimator:
                 - filtered_indices: Indices of high-confidence matches (if filtered)
                 - info: Diagnostic information
         """
-        # Step 1: Predict confidence for all matches
+        # Step 1: Predict confidence for all matches (with geometric features)
         confidence = self.predict_match_confidence(
             best_match_distances,
             ratio_test_values,
             n_candidates,
             reprojection_errors,
-            detector_scores
+            detector_scores,
+            geometric_features=geometric_features  # NEW
         )
         
         # Step 2: Filter low-confidence matches if requested
@@ -341,57 +362,52 @@ class PoseUncertaintyEstimator:
             pixel_uncertainties
         )
         
-        # Package results
-        result = {
+        return {
             "covariance": covariance,
             "confidence": confidence,
-            "confidence_filtered": confidence_filtered,
             "pixel_uncertainties": pixel_uncertainties,
             "filtered_indices": filtered_indices,
-            "n_filtered": len(filtered_indices),
-            "n_total": len(confidence),
             "info": info
         }
-        
-        return result
 
 
-def print_uncertainty_summary(result: Dict):
-    """Print a human-readable summary of uncertainty estimation results."""
+def print_uncertainty_summary(result: Dict, actual_error: Optional[float] = None):
+    """
+    Print a human-readable summary of uncertainty estimation results.
+    
+    Args:
+        result: Output from estimate_pose_uncertainty()
+        actual_error: Optional ground truth error for validation
+    """
     print("\n" + "="*60)
-    print("POSE UNCERTAINTY SUMMARY")
+    print("POSE UNCERTAINTY ESTIMATE")
     print("="*60)
     
-    print(f"\nMatches:")
-    print(f"  Total:    {result['n_total']}")
-    print(f"  Filtered: {result['n_filtered']} "
-          f"({result['n_filtered']/result['n_total']*100:.1f}%)")
-    
-    print(f"\nConfidence Statistics:")
-    conf = result['confidence_filtered']
-    print(f"  Min:    {conf.min():.3f}")
-    print(f"  25th:   {np.percentile(conf, 25):.3f}")
-    print(f"  Median: {np.median(conf):.3f}")
-    print(f"  75th:   {np.percentile(conf, 75):.3f}")
-    print(f"  Max:    {conf.max():.3f}")
-    
-    print(f"\nPixel Uncertainty:")
-    sigma = result['pixel_uncertainties']
-    print(f"  Mean:   {sigma.mean():.2f} px")
-    print(f"  Median: {np.median(sigma):.2f} px")
-    print(f"  Std:    {sigma.std():.2f} px")
-    
     info = result['info']
+    
+    print(f"\nMatch-Level Uncertainty:")
+    print(f"  Number of matches:      {info['n_points']}")
+    print(f"  Mean confidence:        {np.mean(result['confidence']):.3f}")
+    print(f"  Confidence range:       [{np.min(result['confidence']):.3f}, {np.max(result['confidence']):.3f}]")
+    print(f"  Mean pixel uncertainty: {info['mean_pixel_uncertainty']:.2f} px")
+    print(f"  Median pixel unc.:      {info['median_pixel_uncertainty']:.2f} px")
+    
     print(f"\nPose Uncertainty:")
-    print(f"  Rotation (std):    [{info['rotation_uncertainty'][0]:.4f}, "
-          f"{info['rotation_uncertainty'][1]:.4f}, "
-          f"{info['rotation_uncertainty'][2]:.4f}] rad")
-    print(f"  Translation (std): [{info['translation_uncertainty'][0]:.4f}, "
-          f"{info['translation_uncertainty'][1]:.4f}, "
-          f"{info['translation_uncertainty'][2]:.4f}] m")
+    rot_std = info['rotation_uncertainty']
+    trans_std = info['translation_uncertainty']
+    print(f"  Rotation std:     [{rot_std[0]:.4f}, {rot_std[1]:.4f}, {rot_std[2]:.4f}] rad")
+    print(f"  Translation std:  [{trans_std[0]:.4f}, {trans_std[1]:.4f}, {trans_std[2]:.4f}] m")
+    print(f"  Total trans. unc: {np.linalg.norm(trans_std)*1000:.1f} mm")
     
     print(f"\nDiagnostics:")
     print(f"  Mean reprojection error: {info['mean_reprojection_error']:.2f} px")
-    print(f"  Condition number:        {info['condition_number']:.2e}")
+    print(f"  Information matrix cond: {info['condition_number']:.1e}")
+    
+    if actual_error is not None:
+        trans_unc_total = np.linalg.norm(trans_std)
+        print(f"\nValidation:")
+        print(f"  Predicted uncertainty: {trans_unc_total*1000:.1f} mm")
+        print(f"  Actual error:          {actual_error*1000:.1f} mm")
+        print(f"  Ratio (error/unc):     {actual_error/trans_unc_total:.2f}")
     
     print("="*60)
