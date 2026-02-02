@@ -8,10 +8,45 @@ import numpy as np
 import time
 import json
 from scipy.spatial.transform import Rotation
-from loc_modules import MapLoader, Localiser
 import yaml
 from test.memory import MemoryMonitor
 import glob
+
+def compute_image_quality_features(frame_gray):
+    """
+    Compute image quality metrics for a grayscale frame.
+    
+    Args:
+        frame_gray: Grayscale image (H x W) numpy array
+        
+    Returns:
+        dict with image quality features
+    """
+    features = {}
+    
+    # 1. Blur score (Laplacian variance)
+    # Higher = sharper image
+    laplacian = cv2.Laplacian(frame_gray, cv2.CV_64F)
+    features['blur_score'] = laplacian.var()
+    
+    # 2. Brightness (mean intensity)
+    features['brightness'] = np.mean(frame_gray)
+    
+    # 3. Contrast (std intensity)
+    features['contrast'] = np.std(frame_gray)
+    
+    # 4. Edge density (Canny edges)
+    edges = cv2.Canny(frame_gray, 50, 150)
+    features['edge_density'] = np.sum(edges > 0) / edges.size
+    
+    # 5. Histogram uniformity (entropy of intensity distribution)
+    hist = cv2.calcHist([frame_gray], [0], None, [256], [0, 256])
+    hist = hist.flatten() / hist.sum()
+    hist = hist[hist > 0]  # Remove zero bins
+    entropy = -np.sum(hist * np.log2(hist))
+    features['histogram_uniformity'] = entropy / 8.0  # Normalize
+    
+    return features
 
 def compute_geometric_features(inlier_points_2d, inlier_points_3d, camera_matrix, R, t, image_shape):
     """
@@ -161,10 +196,25 @@ if __name__ == "__main__":
     vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/tum_fr1/map_databases/tumfr1_map_train.npz')
+    data = np.load('resources/tum_fr1/map_databases/tum_fr1_train.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
-    print(f"Loaded map: {len(map_3d_points)} points")
+
+    # Load quality metrics (with backward compatibility)
+    if 'track_lengths' in data and 'ba_errors' in data:
+        map_track_lengths = data['track_lengths']
+        map_ba_errors = data['ba_errors']
+        print(f"Loaded map with quality metrics:")
+        print(f"  Points: {len(map_3d_points)}")
+        print(f"  Mean track length: {np.mean(map_track_lengths):.1f}")
+        print(f"  Mean BA error: {np.mean(map_ba_errors):.4f}")
+        has_quality_metrics = True
+    else:
+        print(f"Loaded map: {len(map_3d_points)} points (no quality metrics)")
+        map_track_lengths = None
+        map_ba_errors = None
+        has_quality_metrics = False
+
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -199,13 +249,13 @@ if __name__ == "__main__":
         uncertainty_estimator = None
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALIZATION TEST - TUM FR1 (WITH GEOMETRIC FEATURES)")
+    print("CONTINUOUS LOCALIZATION TEST - TUM fr1 ")
     print("="*60)
     
     all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
     test_frames = all_frames[0:]
     
-    print(f"Map built with first 500 images")
+    
     print(f"Testing with {len(test_frames)} remaining images\n")
     
     errors = []
@@ -232,6 +282,10 @@ if __name__ == "__main__":
         if frame is None:
             continue
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # ========== COMPUTE IMAGE QUALITY FEATURES ==========
+        img_quality = compute_image_quality_features(frame_gray)
+
         
         t_start = time.time()
         with torch.no_grad():
@@ -283,11 +337,13 @@ if __name__ == "__main__":
         matched_3d = []
         matched_2d = []
         matched_query_indices = []
+        matched_map_indices = []  # NEW: Track which map points were matched
         
         for q_idx, (m_idx, dist) in query_to_map.items():
             matched_3d.append(map_3d_points[m_idx])
             matched_2d.append(keypoints[q_idx])
             matched_query_indices.append(q_idx)
+            matched_map_indices.append(m_idx)  
         
         if len(matched_3d) < 4:
             skipped_too_few_matches += 1
@@ -326,6 +382,38 @@ if __name__ == "__main__":
             if median_reproj_error > 5.0:
                 rejected_reproj_error += 1
                 continue
+
+
+            # NEW SECTION: Compute aggregate quality metrics for inlier map points
+            map_quality_features = {}
+
+            if has_quality_metrics:
+                # Get map indices for the inliers
+                inlier_indices_flat = inliers.flatten()
+                inlier_map_idx = [matched_map_indices[i] for i in inlier_indices_flat]
+
+
+                # Look up quality metrics for these map points
+                inlier_track_lengths = map_track_lengths[inlier_map_idx]
+                inlier_ba_errors = map_ba_errors[inlier_map_idx]
+                
+                # Compute aggregate statistics
+                map_quality_features['mean_inlier_track_length'] = float(np.mean(inlier_track_lengths))
+                map_quality_features['median_inlier_track_length'] = float(np.median(inlier_track_lengths))
+                map_quality_features['mean_inlier_ba_error'] = float(np.mean(inlier_ba_errors))
+                map_quality_features['median_inlier_ba_error'] = float(np.median(inlier_ba_errors))
+
+                # Fraction of high-quality inliers (track length >= 5)
+                map_quality_features['frac_high_quality_inliers'] = float(np.sum(inlier_track_lengths >= 5) / len(inlier_track_lengths))
+            else:
+                # Default values if no quality metrics available
+                map_quality_features['mean_inlier_track_length'] = 0.0
+                map_quality_features['median_inlier_track_length'] = 0.0
+                map_quality_features['mean_inlier_ba_error'] = 0.0
+                map_quality_features['median_inlier_ba_error'] = 0.0
+                map_quality_features['frac_high_quality_inliers'] = 0.0
+
+
             
             R_cam, _ = cv2.Rodrigues(rvec)
             C_colmap = -R_cam.T @ tvec.flatten()
@@ -340,8 +428,12 @@ if __name__ == "__main__":
                 t=tvec.flatten(),
                 image_shape=(frame_gray.shape[0], frame_gray.shape[1])
             )
+
+            # Add image quality features
+            for key, val in img_quality.items():
+                geom_features[f'img_{key}'] = val
             
-            # Log geometric features
+            # Log geometric features + image quality
             geom_features['frame'] = frame_name
             geometric_features_log.append(geom_features)
             
@@ -370,6 +462,10 @@ if __name__ == "__main__":
                 uncertainty_result = None
                 
                 try:
+
+                    # Merge geometric and map quality features
+                    combined_features = {**geom_features, **map_quality_features}
+
                     uncertainty_result = uncertainty_estimator.estimate_pose_uncertainty(
                         points_3d=inlier_points_3d,
                         points_2d=inlier_points_2d,
@@ -381,7 +477,7 @@ if __name__ == "__main__":
                         n_candidates=inlier_n_candidates,
                         reprojection_errors=reproj_errors,
                         detector_scores=detector_scores,
-                        geometric_features=geom_features,  # Pass geometric features
+                        geometric_features=combined_features,  # Pass geometric features
                         filter_low_confidence=False
                     )
                     
@@ -397,7 +493,7 @@ if __name__ == "__main__":
                     }
                     
                     # Add geometric features to uncertainty entry
-                    for key, val in geom_features.items():
+                    for key, val in combined_features.items():
                         if key != 'frame':
                             unc_entry[f'geom_{key}'] = val
                     
@@ -485,8 +581,7 @@ if __name__ == "__main__":
         if len(pose_uncertainties) > 0:
             save_dict['uncertainty_data'] = pose_uncertainties
         
-        np.savez('results/fr1_with_uncertainty_geometric.npz', **save_dict)
-        print("\n✓ Saved results to results/fr1_with_uncertainty_geometric.npz")
+        
         
         # Save detailed CSV with geometric features
         if len(pose_uncertainties) > 0:
@@ -508,7 +603,14 @@ if __name__ == "__main__":
             geom_feature_names = [
                 'n_inliers', 'match_spread_normalized', 'match_std_x', 'match_std_y',
                 'depth_mean', 'depth_std', 'depth_relative_std', 'depth_range',
-                'n_quadrants_active', 'quadrant_entropy', 'mean_inverse_depth', 'condition_estimate'
+                'n_quadrants_active', 'quadrant_entropy', 'mean_inverse_depth', 'condition_estimate',
+                'mean_inlier_track_length', 'median_inlier_track_length',
+                'mean_inlier_ba_error', 'median_inlier_ba_error',
+                'frac_high_quality_inliers', 
+                # Image quality features
+                'img_blur_score', 'img_brightness', 'img_contrast', 
+                'img_edge_density', 'img_histogram_uniformity'
+
             ]
             
             for feat_name in geom_feature_names:
@@ -518,8 +620,8 @@ if __name__ == "__main__":
             
             uncertainty_df = pd.DataFrame(df_data)
             
-            uncertainty_df.to_csv('results/uncertainty_with_geometry.csv', index=False)
-            print("✓ Saved detailed data to results/uncertainty_with_geometry.csv")
+            uncertainty_df.to_csv('results/fr1_uncertainty_with_geometry.csv', index=False)
+            print("✓ Saved detailed data to results/xxx.csv")
             print(f"  Total columns: {len(uncertainty_df.columns)}")
             print(f"  Geometric features included: {len(geom_feature_names)}")
             

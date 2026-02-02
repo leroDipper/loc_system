@@ -1,14 +1,6 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-
-df = pd.read_csv("results/feature_lifecycles.csv")
-survivors = df[df["survived"] == True]
-
-print("Reprojection error statistics (survivors only):")
-print(survivors["reprojection_error"].describe())
-
-plt.hist(survivors["reprojection_error"], bins=50)
-plt.xlabel("Reprojection Error (pixels)")
-plt.ylabel("Count")
-plt.title("Reprojection Error Distribution (Inliers Only)")
-plt.show()
+df = pd.read_csv('results/uncertainty_with_geometry.csv')
+map_cols = ['mean_inlier_track_length', 'median_inlier_track_length', 
+            'mean_inlier_ba_error', 'median_inlier_ba_error', 
+            'frac_high_quality_inliers']
+print(df[map_cols].corr())

@@ -201,9 +201,9 @@ def main():
     print("=" * 60)
     
     # Paths (update these to your actual paths)
-    gt_path = 'resources/mh_01/data.csv'
-    colmap_path = 'resources/mh_01/colmap_files/images.txt'
-    output_dir = 'resources/mh_01/colmap_files'
+    gt_path = 'resources/mh_03/data.csv'
+    colmap_path = 'resources/mh_03/project_files/images.txt'
+    output_dir = 'resources/mh_03/project_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -276,7 +276,7 @@ def main():
         'std_alignment_error_meters': float(np.std(errors))
     }
     
-    output_path = Path(output_dir) / 'colmap_to_gt_transform_int8.json'
+    output_path = Path(output_dir) / 'colmap_to_gt_transform.json'
     with open(output_path, 'w') as f:
         json.dump(transform_data, f, indent=2)
     

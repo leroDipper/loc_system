@@ -39,9 +39,9 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/proj_files/colmap_to_gt_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
-    EUROC_DATASET_PATH = 'resources/mh_01'
+    scale, R, t = GroundTruthParams.load_transformation('resources/mh_03/project_files/colmap_to_gt_transform.json')
+    CAMERA_PARAMS_PATH = 'resources/mh_03/images/camera_rectified.yaml'
+    EUROC_DATASET_PATH = 'resources/mh_03'
     N_TRAIN_IMAGES = 0  # Number of images used for map building
 
     gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After loading XFeat")
 
     # Load COLMAP image order to determine train/test split
-    colmap_images = load_colmap_image_names('resources/mh_01/proj_files/images.txt')
+    colmap_images = load_colmap_image_names('resources/mh_03/project_files/images.txt')
     train_images = set(colmap_images[:N_TRAIN_IMAGES])
     test_images = set(colmap_images[N_TRAIN_IMAGES:])
     
@@ -72,11 +72,11 @@ if __name__ == "__main__":
     print(f"Test set: {len(test_images)} images")
 
     # Load existing vocabulary (built with FP32)
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/mh_03/vocabularies/vocab_tree.bin'
     print("Loaded existing vocabulary")
 
     # Load existing FP32 map (built from train images only)
-    data = np.load('resources/mh_01/map_databases/mh_01_train.npz')
+    data = np.load('resources/mh_03/map_databases/mh_03_train.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
@@ -106,11 +106,11 @@ if __name__ == "__main__":
     # CONTINUOUS LOCALISATION TEST
     # ===================================================================
     print("\n" + "="*60)
-    print("INT8 QUERIES vs FP32 MAP - EUROC mh_01")
+    print("INT8 QUERIES vs FP32 MAP - EUROC mh_03")
     print("="*60)
     
     print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
-    print(f"Testing with {len(test_images)} held-out images (INT8)\n")
+    print(f"Testing with {len(test_images)} held-out images \n")
     
     errors = []
     match_counts = []

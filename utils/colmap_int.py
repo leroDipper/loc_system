@@ -280,15 +280,15 @@ def extract_and_populate_database(dataset_path, db_path, camera_params):
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/iphone/images'
-    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/iphone'
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03/images'
+    output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_03'
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    db_path = os.path.join(output_dir, 'iphone.db')
+    db_path = os.path.join(output_dir, 'mh_03.db')
     
     # Load camera parameters from YAML (rectified images)
-    yaml_path = 'resources/iphone/images/camera_rectified.yaml'
+    yaml_path = 'resources/mh_03/images/camera_rectified.yaml'
     
     if not os.path.exists(yaml_path):
         print(f"ERROR: Camera parameter file not found: {yaml_path}")

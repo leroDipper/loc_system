@@ -1,5 +1,5 @@
 """
-Train match confidence model with geometric features - REGRESSION VERSION
+Train match confidence model with for all datasets - REGRESSION VERSION
 
 Learns: error_magnitude = f(descriptor features, geometric config, map quality)
 
@@ -23,7 +23,11 @@ print("TRAINING ERROR PREDICTION MODEL (REGRESSION)")
 print("="*60)
 
 # Load data
-df = pd.read_csv("results/mh_03_uncertainty_with_geometry.csv")
+df_fr1 = pd.read_csv("results/fr1_uncertainty_with_geometry.csv")
+df_fr3 = pd.read_csv("results/fr3_uncertainty_with_geometry.csv")
+df_mh_01 = pd.read_csv("results/mh_01_uncertainty_with_geometry.csv")
+
+df = pd.concat([df_fr1, df_fr3, df_mh_01], ignore_index=True)
 print(f"\nLoaded {len(df)} frames")
 print(f"Columns: {len(df.columns)}")
 
@@ -68,8 +72,13 @@ map_quality_features = [
     "mean_inlier_ba_error"
 ]
 
-image_quality_features = ['img_blur_score', 'img_brightness',       'img_contrast', 
-    'img_edge_density', 'img_histogram_uniformity']
+image_quality_features = [
+    'img_blur_score', 
+    'img_brightness',
+    'img_contrast', 
+    'img_edge_density', 
+    'img_histogram_uniformity'
+]
 
 all_features = match_features + geometric_features + map_quality_features + image_quality_features
 
