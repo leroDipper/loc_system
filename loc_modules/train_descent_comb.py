@@ -23,11 +23,12 @@ print("TRAINING ERROR PREDICTION MODEL (REGRESSION)")
 print("="*60)
 
 # Load data
-df_fr1 = pd.read_csv("results/fr1_uncertainty_with_geometry.csv")
-df_fr3 = pd.read_csv("results/fr3_uncertainty_with_geometry.csv")
-df_mh_01 = pd.read_csv("results/mh_01_uncertainty_with_geometry.csv")
+df_fr1 = pd.read_csv("results/fr1_uncertainty.csv")
+df_fr3 = pd.read_csv("results/fr3_uncertainty.csv")
+df_mh_01 = pd.read_csv("results/mh_01_uncertainty.csv")
+df_mh_03 = pd.read_csv("results/mh_03_uncertainty.csv")
 
-df = pd.concat([df_fr1, df_fr3, df_mh_01], ignore_index=True)
+df = pd.concat([df_fr1, df_fr3, df_mh_01, df_mh_03], ignore_index=True)
 print(f"\nLoaded {len(df)} frames")
 print(f"Columns: {len(df.columns)}")
 
@@ -98,7 +99,16 @@ if missing_features:
 
 # Extract features and target
 X = df[all_features].values
-y = df["error_m"].values  # Continuous error in meters
+# After loading data (line 102 in train_descent_comb.py)
+y = df["error_m"].values
+
+# Remove extreme outliers (e.g., errors > 50cm)
+outlier_mask = y < 0.3  # Keep errors below 50cm
+X = X[outlier_mask]
+y = y[outlier_mask]
+
+print(f"Removed {(~outlier_mask).sum()} outliers")
+print(f"New dataset size: {len(y)}")
 
 # Handle NaN and inf
 X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)

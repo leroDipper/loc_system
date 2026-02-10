@@ -1,165 +1,291 @@
 """
-Pose Uncertainty Estimation Module - Version 2 (with Geometric Features)
+Pose Uncertainty Estimation Module - Bayesian Version
 
-Converts match-level confidence scores into pose covariance using:
-1. ML model: match features + geometric features → confidence p
-2. Uncertainty scaling: p → pixel uncertainty σ
-3. Covariance propagation: σ → pose covariance Σ
-
-NEW: Now includes geometric quality features for improved uncertainty prediction.
+Uses hierarchical Bayesian model to estimate pose uncertainty based on 
+frame-level features rather than per-match features.
 """
 
 import numpy as np
 import joblib
 from typing import Tuple, Dict, Optional
 import warnings
+import cv2
 
 
-class PoseUncertaintyEstimator:
-    """Estimates pose covariance from match confidence and geometry."""
+class BayesianPoseUncertaintyEstimator:
+    """Estimates pose uncertainty using hierarchical Bayesian model."""
     
     def __init__(
         self,
-        model_path: str = "results/match_confidence_model.joblib",
-        sigma_base: float = 1.0,
-        min_confidence: float = 0.3,
-        use_reprojection_refinement: bool = True
+        model_path: str = "results/bayesian_model.joblib",
+        use_dataset_specific: bool = False,
+        dataset_name: Optional[str] = None
     ):
         """
-        Initialize the uncertainty estimator.
+        Initialize the Bayesian uncertainty estimator.
         
         Args:
-            model_path: Path to trained match confidence model
-            sigma_base: Base pixel uncertainty for perfect matches (pixels)
-            min_confidence: Minimum confidence threshold (reject below this)
-            use_reprojection_refinement: Whether to refine uncertainty with reprojection error
+            model_path: Path to trained Bayesian model
+            use_dataset_specific: If True, use dataset-specific parameters
+            dataset_name: Which dataset to use if dataset_specific is True
+                         (one of: 'FR1', 'FR3', 'MH_01', 'MH_03')
         """
-        self.sigma_base = sigma_base
-        self.min_confidence = min_confidence
-        self.use_reprojection_refinement = use_reprojection_refinement
+        self.use_dataset_specific = use_dataset_specific
+        self.dataset_name = dataset_name
         
-        # Load trained model
+        # Load trained Bayesian model
         try:
             model_data = joblib.load(model_path)
-            self.model = model_data["model"]
-            self.feature_names = model_data["features"]
-            print(f"✓ Loaded match confidence model from {model_path}")
-            print(f"  AUC: {model_data.get('auc_test', 'N/A'):.3f}")
-            print(f"  Features: {', '.join(self.feature_names)}")
+            
+            # Extract model components
+            self.feature_names = model_data['features']
+            self.scaler = model_data['scaler']
+            self.y_mean = model_data['y_mean']
+            self.y_std = model_data['y_std']
+            
+            # Global parameters (always available)
+            self.μ_global = model_data['μ_global']
+            self.sigma_global = model_data['sigma_global']
+            
+            # Dataset-specific parameters (optional)
+            if use_dataset_specific:
+                self.β = model_data['β']  # (n_datasets, n_features)
+                self.dataset_names = model_data['dataset_names']
+                
+                if dataset_name is not None:
+                    if dataset_name not in self.dataset_names:
+                        raise ValueError(
+                            f"Dataset '{dataset_name}' not found. "
+                            f"Available: {self.dataset_names}"
+                        )
+                    self.dataset_idx = self.dataset_names.index(dataset_name)
+                else:
+                    warnings.warn(
+                        "Dataset-specific mode enabled but no dataset specified. "
+                        "Will use global priors."
+                    )
+                    self.use_dataset_specific = False
+            
+            print(f" Loaded Bayesian uncertainty model from {model_path}")
+            print(f"  R²: {model_data.get('r2', 'N/A'):.3f}")
+            print(f"  RMSE: {model_data.get('rmse', 'N/A')*100:.2f} cm")
+            print(f"  Features: {len(self.feature_names)}")
+            if use_dataset_specific and dataset_name:
+                print(f"  Using {dataset_name}-specific parameters")
+            else:
+                print(f"  Using global parameters")
+                
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"Model not found at {model_path}. "
-                f"Train it first using train_descent_geometric.py"
+                f"Bayesian model not found at {model_path}. "
+                f"Train it first using train_bayesian.py"
             )
     
-    def predict_match_confidence(
+    def extract_frame_features(
         self,
-        best_match_distances: np.ndarray,
-        ratio_test_values: np.ndarray,
-        n_candidates: np.ndarray,
+        points_3d: np.ndarray,
+        points_2d: np.ndarray,
+        inlier_points_3d: np.ndarray,
+        inlier_points_2d: np.ndarray,
+        camera_matrix: np.ndarray,
+        R: np.ndarray,
+        t: np.ndarray,
         reprojection_errors: np.ndarray,
-        detector_scores: np.ndarray,
-        geometric_features: Optional[Dict] = None
-    ) -> np.ndarray:
+        image_gray: Optional[np.ndarray] = None,
+        all_keypoints: Optional[np.ndarray] = None,
+        n_raw_matches: Optional[int] = None
+    ) -> Dict[str, float]:
         """
-        Predict confidence for each match using the ML model.
+        Extract frame-level features for Bayesian model.
+        
+        This matches the features used in train_bayesian.py:
+        - mean_inverse_depth
+        - mean_n_candidates
+        - mean_inlier_ba_error (reprojection error)
+        - depth_mean
+        - match_spread_normalized
+        - match_std_x
+        - quadrant_entropy
+        - n_inliers
+        - depth_relative_std
         
         Args:
-            best_match_distances: Descriptor distance to best match
-            ratio_test_values: Lowe's ratio test values
-            n_candidates: Number of candidate matches per feature
-            reprojection_errors: Geometric reprojection errors (pixels)
-            detector_scores: XFeat detector confidence scores
-            geometric_features: Dict with global geometric quality features (NEW)
+            points_3d: All matched 3D points before RANSAC (N x 3)
+            points_2d: All matched 2D points before RANSAC (N x 2)
+            inlier_points_3d: Inlier 3D points after RANSAC (M x 3)
+            inlier_points_2d: Inlier 2D points after RANSAC (M x 2)
+            camera_matrix: Camera intrinsic matrix (3 x 3)
+            R: Rotation matrix (3 x 3)
+            t: Translation vector (3 x 1)
+            reprojection_errors: Per-inlier reprojection errors (M,)
+            image_gray: Optional grayscale image for image quality features
+            all_keypoints: Optional all detected keypoints for spatial analysis
+            n_raw_matches: Optional total number of raw matches before filtering
             
         Returns:
-            confidence: Array of confidence scores [0, 1] for each match
+            features: Dictionary with feature values
         """
-        # Build feature matrix
-        n_matches = len(best_match_distances)
-        X = np.zeros((n_matches, len(self.feature_names)))
+        features = {}
+        
+        # Transform 3D points to camera frame
+        points_camera = (R @ inlier_points_3d.T).T + t.reshape(1, 3)
+        depths = points_camera[:, 2]  # Z-coordinate is depth
+        
+        # 1. mean_inverse_depth
+        inverse_depths = 1.0 / (depths + 1e-6)
+        features['mean_inverse_depth'] = np.mean(inverse_depths)
+        
+        # 2. depth_mean
+        features['depth_mean'] = np.mean(depths)
+        
+        # 3. depth_relative_std
+        features['depth_relative_std'] = np.std(depths) / (np.mean(depths) + 1e-6)
+        
+        # 4. mean_inlier_ba_error (reprojection error)
+        features['mean_inlier_ba_error'] = np.mean(reprojection_errors)
+        
+        # 5. n_inliers
+        features['n_inliers'] = len(inlier_points_3d)
+        
+        # 6. match_std_x (spatial spread of matches in X)
+        if camera_matrix is not None:
+            img_width = 2 * camera_matrix[0, 2]
+            features['match_std_x'] = np.std(inlier_points_2d[:, 0]) / img_width
+        else:
+            raise ValueError("camera_matrix is required for feature extraction")
+        #     features['match_std_x'] = np.std(inlier_points_2d[:, 0]) / 752.0
+        
+        # 7. match_spread_normalized (spatial coverage)
+        if len(inlier_points_2d) >= 3:
+            # Use minimum enclosing circle (same as training)
+            center, radius = cv2.minEnclosingCircle(inlier_points_2d.astype(np.float32))
+            
+            if camera_matrix is not None:
+                img_width = 2 * camera_matrix[0, 2]
+                img_height = 2 * camera_matrix[1, 2]
+                diagonal = np.sqrt(img_width**2 + img_height**2)
+                features['match_spread_normalized'] = radius / diagonal
+            else:
+                # Fallback
+                diagonal = np.sqrt(752**2 + 480**2)
+                features['match_spread_normalized'] = radius / diagonal
+        else:
+            features['match_spread_normalized'] = 0.0
+        # 8. quadrant_entropy (distribution across image quadrants)
+        if camera_matrix is not None:
+            cx = camera_matrix[0, 2]
+            cy = camera_matrix[1, 2]
+            
+            # Count points in each quadrant
+            quadrant_counts = np.zeros(4)
+            for point in inlier_points_2d:
+                x, y = point
+                if x < cx and y < cy:
+                    quadrant_counts[0] += 1  # Top-left
+                elif x >= cx and y < cy:
+                    quadrant_counts[1] += 1  # Top-right
+                elif x < cx and y >= cy:
+                    quadrant_counts[2] += 1  # Bottom-left
+                else:
+                    quadrant_counts[3] += 1  # Bottom-right
+            
+            # Compute entropy
+            total = np.sum(quadrant_counts)
+            if total > 0:
+                probs = quadrant_counts / total
+                probs = probs[probs > 0]  # Remove zeros
+                features['quadrant_entropy'] = -np.sum(probs * np.log2(probs + 1e-10))
+            else:
+                features['quadrant_entropy'] = 0.0
+        else:
+            features['quadrant_entropy'] = 0.0
+        
+        return features
+    
+    def predict_error(
+        self,
+        features: Dict[str, float]
+    ) -> Tuple[float, float]:
+        """
+        Predict localization error using Bayesian model.
+        
+        Args:
+            features: Dictionary of frame-level features
+            
+        Returns:
+            mean_error: Predicted mean error (meters)
+            std_error: Predicted standard deviation (meters)
+        """
+        # Build feature vector
+        feature_vector = np.zeros(len(self.feature_names))
         
         for i, feat_name in enumerate(self.feature_names):
-            # Per-match features (used directly)
-            if feat_name == "best_match_distance":
-                X[:, i] = best_match_distances
-            elif feat_name == "ratio_test_value":
-                X[:, i] = ratio_test_values
-            elif feat_name == "n_candidates":
-                X[:, i] = n_candidates
-            elif feat_name == "reprojection_error":
-                X[:, i] = reprojection_errors
-            elif feat_name == "detector_score":
-                X[:, i] = detector_scores
-            
-            # Aggregate features computed from per-match data (broadcast to all matches)
-            elif feat_name == "mean_ratio_test":
-                X[:, i] = np.mean(ratio_test_values)
-            elif feat_name == "mean_n_candidates":
-                X[:, i] = np.mean(n_candidates)
-            elif feat_name == "n_matches":
-                X[:, i] = n_matches
-            elif feat_name == "n_inliers":
-                X[:, i] = n_matches  # Same as n_matches in this context
-            
-            # Global geometric features (broadcast to all matches)
-            elif geometric_features is not None:
-                # Remove 'geom_' prefix if present in model features
-                geom_key = feat_name.replace('geom_', '') if feat_name.startswith('geom_') else feat_name
-                
-                if geom_key in geometric_features:
-                    # Broadcast scalar feature to all matches
-                    X[:, i] = geometric_features[geom_key]
-                else:
-                    warnings.warn(f"Geometric feature '{geom_key}' not found, using zeros")
+            if feat_name in features:
+                feature_vector[i] = features[feat_name]
             else:
-                # Model expects geometric features but none provided
-                warnings.warn(f"Feature '{feat_name}' not available, using zeros")
+                warnings.warn(f"Feature '{feat_name}' not available, using 0")
+                feature_vector[i] = 0.0
         
-        # Handle missing values
-        X = np.nan_to_num(X, nan=0.0, posinf=50.0, neginf=0.0)
+        # Standardize features using same scaler as training
+        feature_vector_scaled = self.scaler.transform(feature_vector.reshape(1, -1))[0]
         
-        # Predict confidence
-        confidence = self.model.predict_proba(X)[:, 1]
+        # Clip extreme values (same as training)
+        feature_vector_scaled = np.clip(feature_vector_scaled, -5, 5)
         
-        return confidence
+        # Predict using appropriate parameters
+        if self.use_dataset_specific and hasattr(self, 'dataset_idx'):
+            # Use dataset-specific effects
+            β = self.β[self.dataset_idx]
+            error_scaled = np.dot(β, feature_vector_scaled)
+        else:
+            # Use global priors
+            error_scaled = np.dot(self.μ_global, feature_vector_scaled)
+        
+        # Unscale to meters
+        mean_error = error_scaled * self.y_std + self.y_mean
+        
+        # Uncertainty from global variance
+        # This represents epistemic uncertainty (model uncertainty)
+        std_error = np.sqrt(np.sum((self.sigma_global * feature_vector_scaled)**2))
+        std_error = std_error * self.y_std  # Unscale
+        
+        # Ensure positive error
+        mean_error = max(0.001, mean_error)  # At least 1mm
+        std_error = max(0.001, std_error)
+        
+        return mean_error, std_error
     
-    def confidence_to_pixel_uncertainty(
+    def error_to_pixel_uncertainty(
         self,
-        confidence: np.ndarray,
-        reprojection_errors: Optional[np.ndarray] = None
-    ) -> np.ndarray:
+        predicted_error: float,
+        camera_matrix: np.ndarray,
+        average_depth: float
+    ) -> float:
         """
-        Convert match confidence to pixel-level measurement uncertainty.
+        Convert predicted spatial error (meters) to pixel uncertainty.
         
-        Uses the formula: σ = σ_base / sqrt(confidence)
-        
-        Optionally refines with reprojection error for better gradation.
+        Uses simple pinhole camera model:
+        pixel_error ≈ focal_length * spatial_error / depth
         
         Args:
-            confidence: Match confidence scores [0, 1]
-            reprojection_errors: Optional reprojection errors for refinement
+            predicted_error: Predicted error in meters
+            camera_matrix: Camera intrinsic matrix
+            average_depth: Average depth of matched points (meters)
             
         Returns:
-            sigma: Pixel uncertainty for each match (pixels)
+            pixel_uncertainty: Uncertainty in pixels
         """
-        # Clip confidence to avoid division by zero
-        confidence = np.clip(confidence, self.min_confidence, 1.0)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        f_avg = (fx + fy) / 2.0
         
-        # Base uncertainty from confidence
-        sigma = self.sigma_base / np.sqrt(confidence)
+        # Convert spatial error to pixel error
+        pixel_uncertainty = f_avg * predicted_error / (average_depth + 1e-6)
         
-        # Optional refinement with reprojection error
-        if self.use_reprojection_refinement and reprojection_errors is not None:
-            # For matches with low reprojection error (<10px), refine uncertainty
-            # This adds fine-grained variation within high-confidence matches
-            low_error_mask = reprojection_errors < 10.0
-            if low_error_mask.any():
-                # Scale factor based on reprojection error: [0.5, 1.5]
-                error_scale = 0.5 + 0.5 * np.clip(reprojection_errors / 3.0, 0, 1)
-                sigma[low_error_mask] *= error_scale[low_error_mask]
+        # Clamp to reasonable range
+        pixel_uncertainty = np.clip(pixel_uncertainty, 0.5, 50.0)
         
-        return sigma
+        return pixel_uncertainty
     
     def compute_pose_covariance(
         self,
@@ -168,17 +294,13 @@ class PoseUncertaintyEstimator:
         camera_matrix: np.ndarray,
         R: np.ndarray,
         t: np.ndarray,
-        pixel_uncertainties: np.ndarray
+        pixel_uncertainty: float
     ) -> Tuple[np.ndarray, Dict]:
         """
-        Compute 6-DOF pose covariance from measurement uncertainties.
+        Compute 6-DOF pose covariance from predicted uncertainty.
         
-        Uses first-order uncertainty propagation:
-        Σ_pose = (J^T W J)^{-1}
-        
-        where:
-        - J is the Jacobian of reprojection w.r.t. pose
-        - W is the inverse measurement covariance (diagonal from pixel uncertainties)
+        Uses first-order uncertainty propagation with uniform pixel uncertainty
+        for all matches (since Bayesian model gives frame-level prediction).
         
         Args:
             points_3d: 3D points in world coordinates (N x 3)
@@ -186,7 +308,7 @@ class PoseUncertaintyEstimator:
             camera_matrix: Camera intrinsic matrix (3 x 3)
             R: Rotation matrix (3 x 3)
             t: Translation vector (3 x 1)
-            pixel_uncertainties: Per-match pixel uncertainties (N,)
+            pixel_uncertainty: Predicted pixel uncertainty (same for all points)
             
         Returns:
             covariance: 6x6 pose covariance matrix (rotation + translation)
@@ -237,13 +359,9 @@ class PoseUncertaintyEstimator:
             J[2*i+1, 4] = dv_dY
             J[2*i+1, 5] = dv_dZ
         
-        # Build weight matrix
-        weights = np.zeros(2 * n_points)
-        for i in range(n_points):
-            weights[2*i] = 1.0 / (pixel_uncertainties[i] ** 2)
-            weights[2*i+1] = 1.0 / (pixel_uncertainties[i] ** 2)
-        
-        W = np.diag(weights)
+        # Build weight matrix (uniform weights from Bayesian prediction)
+        weight = 1.0 / (pixel_uncertainty ** 2)
+        W = np.eye(2 * n_points) * weight
         
         # Compute information matrix: H = J^T W J
         H = J.T @ W @ J
@@ -262,9 +380,7 @@ class PoseUncertaintyEstimator:
         
         info = {
             "n_points": n_points,
-            "mean_pixel_uncertainty": np.mean(pixel_uncertainties),
-            "median_pixel_uncertainty": np.median(pixel_uncertainties),
-            "std_pixel_uncertainty": np.std(pixel_uncertainties),
+            "pixel_uncertainty": pixel_uncertainty,
             "mean_reprojection_error": np.mean(reprojection_errors),
             "median_reprojection_error": np.median(reprojection_errors),
             "condition_number": np.linalg.cond(H),
@@ -278,136 +394,155 @@ class PoseUncertaintyEstimator:
         self,
         points_3d: np.ndarray,
         points_2d: np.ndarray,
+        inlier_points_3d: np.ndarray,
+        inlier_points_2d: np.ndarray,
         camera_matrix: np.ndarray,
         R: np.ndarray,
         t: np.ndarray,
-        best_match_distances: np.ndarray,
-        ratio_test_values: np.ndarray,
-        n_candidates: np.ndarray,
         reprojection_errors: np.ndarray,
-        detector_scores: np.ndarray,
-        geometric_features: Optional[Dict] = None,  # NEW
-        filter_low_confidence: bool = True
+        image_gray: Optional[np.ndarray] = None,
+        all_keypoints: Optional[np.ndarray] = None,
+        n_raw_matches: Optional[int] = None,
+        skip_covariance: bool = False
     ) -> Dict:
         """
-        End-to-end pose uncertainty estimation pipeline.
+        End-to-end pose uncertainty estimation using Bayesian model.
         
         Args:
-            points_3d: 3D points (N x 3)
-            points_2d: 2D observations (N x 2)
+            points_3d: All matched 3D points before RANSAC (N x 3)
+            points_2d: All matched 2D points before RANSAC (N x 2)
+            inlier_points_3d: Inlier 3D points after RANSAC (M x 3)
+            inlier_points_2d: Inlier 2D points after RANSAC (M x 2)
             camera_matrix: Camera intrinsics (3 x 3)
             R: Rotation matrix (3 x 3)
             t: Translation vector (3 x 1)
-            best_match_distances: Descriptor distances
-            ratio_test_values: Lowe's ratio values
-            n_candidates: Number of candidates per match
-            reprojection_errors: Geometric errors
-            detector_scores: XFeat confidence scores
-            geometric_features: Dict with global geometric features (NEW)
-            filter_low_confidence: Whether to filter out low-confidence matches
+            reprojection_errors: Per-inlier reprojection errors (M,)
+            image_gray: Optional grayscale image
+            all_keypoints: Optional all detected keypoints
+            n_raw_matches: Optional total raw matches
             
         Returns:
             result: Dictionary containing:
                 - covariance: 6x6 pose covariance
-                - confidence: Per-match confidence scores
-                - pixel_uncertainties: Per-match uncertainties
-                - filtered_indices: Indices of high-confidence matches (if filtered)
+                - predicted_error_m: Predicted mean error (meters)
+                - predicted_error_std: Predicted error std dev (meters)
+                - pixel_uncertainty: Predicted pixel uncertainty
+                - features: Extracted features
                 - info: Diagnostic information
         """
-        # Step 1: Predict confidence for all matches (with geometric features)
-        confidence = self.predict_match_confidence(
-            best_match_distances,
-            ratio_test_values,
-            n_candidates,
-            reprojection_errors,
-            detector_scores,
-            geometric_features=geometric_features  # NEW
-        )
-        
-        # Step 2: Filter low-confidence matches if requested
-        if filter_low_confidence:
-            mask = confidence >= self.min_confidence
-            if mask.sum() < 4:
-                warnings.warn(
-                    f"Only {mask.sum()} matches above confidence threshold "
-                    f"({self.min_confidence}). Using all matches."
-                )
-                mask = np.ones(len(confidence), dtype=bool)
-            
-            filtered_indices = np.where(mask)[0]
-            confidence_filtered = confidence[mask]
-            reprojection_errors_filtered = reprojection_errors[mask]
-            points_3d_filtered = points_3d[mask]
-            points_2d_filtered = points_2d[mask]
-        else:
-            filtered_indices = np.arange(len(confidence))
-            confidence_filtered = confidence
-            reprojection_errors_filtered = reprojection_errors
-            points_3d_filtered = points_3d
-            points_2d_filtered = points_2d
-        
-        # Step 3: Convert confidence to pixel uncertainty
-        pixel_uncertainties = self.confidence_to_pixel_uncertainty(
-            confidence_filtered,
-            reprojection_errors_filtered
-        )
-        
-        # Step 4: Compute pose covariance
-        covariance, info = self.compute_pose_covariance(
-            points_3d_filtered,
-            points_2d_filtered,
+        # Step 1: Extract frame-level features
+        features = self.extract_frame_features(
+            points_3d,
+            points_2d,
+            inlier_points_3d,
+            inlier_points_2d,
             camera_matrix,
             R,
             t,
-            pixel_uncertainties
+            reprojection_errors,
+            image_gray,
+            all_keypoints,
+            n_raw_matches
         )
+        
+        # Step 2: Predict error using Bayesian model
+        predicted_error_m, predicted_error_std = self.predict_error(features)
+        
+        # Step 3: Convert to pixel uncertainty
+        average_depth = features['depth_mean']
+        pixel_uncertainty = self.error_to_pixel_uncertainty(
+            predicted_error_m,
+            camera_matrix,
+            average_depth
+        )
+        
+        # Step 4: Compute pose covariance (optional - can skip for speed)
+        if not skip_covariance:
+            covariance, info = self.compute_pose_covariance(
+                inlier_points_3d,
+                inlier_points_2d,
+                camera_matrix,
+                R,
+                t,
+                pixel_uncertainty
+            )
+            # Add Bayesian predictions to info
+            info['predicted_error_m'] = predicted_error_m
+            info['predicted_error_std'] = predicted_error_std
+            info['features'] = features
+        else:
+            # Skip covariance computation for speed
+            covariance = None
+            info = {
+                'predicted_error_m': predicted_error_m,
+                'predicted_error_std': predicted_error_std,
+                'features': features,
+                'pixel_uncertainty': pixel_uncertainty,
+                'mean_reprojection_error': np.mean(reprojection_errors)
+            }
         
         return {
             "covariance": covariance,
-            "confidence": confidence,
-            "pixel_uncertainties": pixel_uncertainties,
-            "filtered_indices": filtered_indices,
+            "predicted_error_m": predicted_error_m,
+            "predicted_error_std": predicted_error_std,
+            "predicted_error_cm": predicted_error_m * 100,
+            "predicted_std_cm": predicted_error_std * 100,
+            "pixel_uncertainty": pixel_uncertainty,
+            "features": features,
             "info": info
         }
 
 
-def print_uncertainty_summary(result: Dict, actual_error: Optional[float] = None):
+def print_bayesian_uncertainty_summary(result: Dict, actual_error: Optional[float] = None):
     """
-    Print a human-readable summary of uncertainty estimation results.
+    Print a human-readable summary of Bayesian uncertainty estimation.
     
     Args:
         result: Output from estimate_pose_uncertainty()
         actual_error: Optional ground truth error for validation
     """
     print("\n" + "="*60)
-    print("POSE UNCERTAINTY ESTIMATE")
+    print("BAYESIAN POSE UNCERTAINTY ESTIMATE")
     print("="*60)
     
     info = result['info']
     
-    print(f"\nMatch-Level Uncertainty:")
-    print(f"  Number of matches:      {info['n_points']}")
-    print(f"  Mean confidence:        {np.mean(result['confidence']):.3f}")
-    print(f"  Confidence range:       [{np.min(result['confidence']):.3f}, {np.max(result['confidence']):.3f}]")
-    print(f"  Mean pixel uncertainty: {info['mean_pixel_uncertainty']:.2f} px")
-    print(f"  Median pixel unc.:      {info['median_pixel_uncertainty']:.2f} px")
+    print(f"\nPredicted Error (Bayesian Model):")
+    print(f"  Mean:  {result['predicted_error_cm']:.2f} cm")
+    print(f"  Std:   {result['predicted_error_std']*100:.2f} cm")
+    print(f"  Range: [{(result['predicted_error_m'] - result['predicted_error_std'])*100:.2f}, "
+          f"{(result['predicted_error_m'] + result['predicted_error_std'])*100:.2f}] cm")
+    
+    print(f"\nFrame Features:")
+    print(f"  Number of inliers:      {int(info['features']['n_inliers'])}")
+    print(f"  Mean depth:             {info['features']['depth_mean']:.2f} m")
+    print(f"  Mean reproj error:      {info['features']['mean_inlier_ba_error']:.2f} px")
+    print(f"  Match spread:           {info['features']['match_spread_normalized']:.3f}")
+    print(f"  Quadrant entropy:       {info['features']['quadrant_entropy']:.2f}")
     
     print(f"\nPose Uncertainty:")
     rot_std = info['rotation_uncertainty']
     trans_std = info['translation_uncertainty']
     print(f"  Rotation std:     [{rot_std[0]:.4f}, {rot_std[1]:.4f}, {rot_std[2]:.4f}] rad")
     print(f"  Translation std:  [{trans_std[0]:.4f}, {trans_std[1]:.4f}, {trans_std[2]:.4f}] m")
-    print(f"  Total trans. unc: {np.linalg.norm(trans_std)*1000:.1f} mm")
+    print(f"  Total trans. unc: {np.linalg.norm(trans_std)*100:.2f} cm")
     
     print(f"\nDiagnostics:")
+    print(f"  Pixel uncertainty:       {info['pixel_uncertainty']:.2f} px")
     print(f"  Mean reprojection error: {info['mean_reprojection_error']:.2f} px")
     print(f"  Information matrix cond: {info['condition_number']:.1e}")
     
     if actual_error is not None:
-        trans_unc_total = np.linalg.norm(trans_std)
         print(f"\nValidation:")
-        print(f"  Predicted uncertainty: {trans_unc_total*1000:.1f} mm")
-        print(f"  Actual error:          {actual_error*1000:.1f} mm")
-        print(f"  Ratio (error/unc):     {actual_error/trans_unc_total:.2f}")
+        print(f"  Predicted error:     {result['predicted_error_cm']:.2f} cm")
+        print(f"  Actual error:        {actual_error*100:.2f} cm")
+        print(f"  Residual:            {(actual_error - result['predicted_error_m'])*100:.2f} cm")
+        print(f"  Within 1sigma?           {abs(actual_error - result['predicted_error_m']) <= result['predicted_error_std']}")
+        
+        # Check if actual error is within predicted range
+        lower = result['predicted_error_m'] - result['predicted_error_std']
+        upper = result['predicted_error_m'] + result['predicted_error_std']
+        within_range = lower <= actual_error <= upper
+        print(f"  Within predicted range? {within_range}")
     
     print("="*60)

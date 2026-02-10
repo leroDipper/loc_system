@@ -15,39 +15,31 @@ import glob
 def compute_image_quality_features(frame_gray):
     """
     Compute image quality metrics for a grayscale frame.
-    
-    Args:
-        frame_gray: Grayscale image (H x W) numpy array
-        
-    Returns:
-        dict with image quality features
     """
     features = {}
     
     # 1. Blur score (Laplacian variance)
-    # Higher = sharper image
     laplacian = cv2.Laplacian(frame_gray, cv2.CV_64F)
-    features['blur_score'] = laplacian.var()
+    features['img_blur_score'] = laplacian.var()  # Changed from 'blur_score'
     
     # 2. Brightness (mean intensity)
-    features['brightness'] = np.mean(frame_gray)
+    features['img_brightness'] = np.mean(frame_gray)  # Changed from 'brightness'
     
     # 3. Contrast (std intensity)
-    features['contrast'] = np.std(frame_gray)
+    features['img_contrast'] = np.std(frame_gray)  # Changed from 'contrast'
     
     # 4. Edge density (Canny edges)
     edges = cv2.Canny(frame_gray, 50, 150)
-    features['edge_density'] = np.sum(edges > 0) / edges.size
+    features['img_edge_density'] = np.sum(edges > 0) / edges.size  # Changed from 'edge_density'
     
     # 5. Histogram uniformity (entropy of intensity distribution)
     hist = cv2.calcHist([frame_gray], [0], None, [256], [0, 256])
     hist = hist.flatten() / hist.sum()
-    hist = hist[hist > 0]  # Remove zero bins
+    hist = hist[hist > 0]
     entropy = -np.sum(hist * np.log2(hist))
-    features['histogram_uniformity'] = entropy / 8.0  # Normalize
+    features['img_histogram_uniformity'] = entropy / 8.0  # Changed from 'histogram_uniformity'
     
     return features
-
 def compute_geometric_features(inlier_points_2d, inlier_points_3d, camera_matrix, R, t, image_shape):
     """
     Compute geometric quality features from match configuration.
@@ -168,10 +160,28 @@ def load_camera_params(yaml_path):
         'cy': params['intrinsics'][3]
     }
 
+def load_colmap_image_names(images_txt_path):
+    """Load image names from COLMAP images.txt in order."""
+    colmap_images = []
+    with open(images_txt_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.strip().split()
+            if len(parts) == 10:
+                colmap_images.append(parts[9])
+    return colmap_images
+
+
+
 if __name__ == "__main__":
     scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr3/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/tum_fr3/camera_params.yaml'
     TUM_DATASET_PATH = 'resources/tum_fr3'
+
+    N_TRAIN_IMAGES = 2000
+    test_dataset_path = 'resources/tum_fr3/images'
+
 
     gt_poses = GroundTruthParams.load_tum_ground_truth(
         gt_file_path=os.path.join(TUM_DATASET_PATH, 'groundtruth.txt'),
@@ -190,8 +200,6 @@ if __name__ == "__main__":
         exit()
 
     MemoryMonitor.print_memory("After loading XFeat")
-
-    test_dataset_path = 'resources/tum_fr3/images'
 
     vocabulary = 'resources/tum_fr3/vocabularies/vocab_tree.bin'
     print("Loaded existing vocabulary")
@@ -239,24 +247,37 @@ if __name__ == "__main__":
     print("\nLoading uncertainty estimation model...")
     try:
         uncertainty_estimator = PoseUncertaintyEstimator(
-            model_path="results/match_confidence_model.joblib",
-            sigma_base=1.0,
-            min_confidence=0.3,
-            use_reprojection_refinement=True
-        )
+        model_path="results/error_prediction_model.joblib",
+        sigma_base=1.0,
+        min_error=0.5,
+        max_error=10.0,
+        use_reprojection_refinement=True
+    )
     except FileNotFoundError:
         print("Warning: Uncertainty model not found. Skipping uncertainty estimation.")
         uncertainty_estimator = None
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALIZATION TEST - TUM FR3 ")
+    print("CONTINUOUS LOCALIZATION TEST - TUM fr3 ")
     print("="*60)
     
+    # Load COLMAP reconstructed images
+    colmap_images = load_colmap_image_names('resources/tum_fr3/project_files/images.txt')
+    colmap_set = set(colmap_images)
+
+    # Get chronological order
     all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
-    test_frames = all_frames[0:]
-    
-    
-    print(f"Testing with {len(test_frames)} remaining images\n")
+    all_filenames = [os.path.basename(f) for f in all_frames]
+
+    # Filter to only reconstructed images
+    reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+    # Take remaining after first N_TRAIN_IMAGES
+    test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+        
+    print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
+    print(f"COLMAP reconstructed {len(colmap_set)} total images")  # NEW LINE
+    print(f"Testing with {len(test_images)} held-out images (INT8)\n")
     
     errors = []
     match_counts = []
@@ -272,7 +293,7 @@ if __name__ == "__main__":
     rejected_reproj_error = 0
 
     
-    for i, frame_path in enumerate(test_frames):
+    for i, frame_path in enumerate(test_images):
         frame_name = os.path.basename(frame_path)
         
         if frame_name not in gt_poses:
@@ -284,12 +305,12 @@ if __name__ == "__main__":
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # ========== COMPUTE IMAGE QUALITY FEATURES ==========
-        img_quality = compute_image_quality_features(frame_gray)
+        img_quality_features = compute_image_quality_features(frame_gray)
 
         
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=550)
         t_extract = time.time() - t_start
         
         features = output[0]
@@ -384,7 +405,6 @@ if __name__ == "__main__":
                 continue
 
 
-            # NEW SECTION: Compute aggregate quality metrics for inlier map points
             map_quality_features = {}
 
             if has_quality_metrics:
@@ -429,9 +449,6 @@ if __name__ == "__main__":
                 image_shape=(frame_gray.shape[0], frame_gray.shape[1])
             )
 
-            # Add image quality features
-            for key, val in img_quality.items():
-                geom_features[f'img_{key}'] = val
             
             # Log geometric features + image quality
             geom_features['frame'] = frame_name
@@ -462,10 +479,6 @@ if __name__ == "__main__":
                 uncertainty_result = None
                 
                 try:
-
-                    # Merge geometric and map quality features
-                    combined_features = {**geom_features, **map_quality_features}
-
                     uncertainty_result = uncertainty_estimator.estimate_pose_uncertainty(
                         points_3d=inlier_points_3d,
                         points_2d=inlier_points_2d,
@@ -477,7 +490,9 @@ if __name__ == "__main__":
                         n_candidates=inlier_n_candidates,
                         reprojection_errors=reproj_errors,
                         detector_scores=detector_scores,
-                        geometric_features=combined_features,  # Pass geometric features
+                        geometric_features= geom_features, 
+                        map_quality_features=map_quality_features,
+                        image_quality_features=img_quality_features,
                         filter_low_confidence=False
                     )
                     
@@ -493,9 +508,18 @@ if __name__ == "__main__":
                     }
                     
                     # Add geometric features to uncertainty entry
-                    for key, val in combined_features.items():
+                    for key, val in geom_features.items():
                         if key != 'frame':
                             unc_entry[f'geom_{key}'] = val
+
+                    # Add map quality features to uncertainty entry
+                    for key, val in map_quality_features.items():
+                        unc_entry[key] = val  # No prefix needed, already have correct names
+                    
+                    # Add image quality features to uncertainty entry
+                    for key, val in img_quality_features.items():
+                        unc_entry[key] = val  # No prefix needed, already have correct names
+                    
                     
                     pose_uncertainties.append(unc_entry)
                     
@@ -508,7 +532,7 @@ if __name__ == "__main__":
             errors.append(error_meters)
             match_counts.append(len(inliers))
             
-            if (i + 1) % 20 == 0:
+            if (i + 1) % 50 == 0:
                 uncertainty_str = ""
                 if uncertainty_result is not None:
                     conf = np.mean(uncertainty_result['confidence'])
@@ -516,7 +540,7 @@ if __name__ == "__main__":
                     spread = geom_features['match_spread_normalized']
                     uncertainty_str = f", Conf={conf:.3f}, σ={sigma:.2f}px, Spread={spread:.2f}"
                 
-                print(f"Frame {i+1}/{len(test_frames)}: "
+                print(f"Frame {i+1}/{len(test_images)}: "
                       f"Error={error_meters:.3f}m, "
                       f"Matches={len(inliers)}/{len(matched_3d)}"
                       f"{uncertainty_str}")
@@ -524,11 +548,11 @@ if __name__ == "__main__":
             rejected_low_inliers += 1
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALIZATION RESULTS (WITH GEOMETRIC FEATURES)")
+    print("CONTINUOUS LOCALIZATION RESULTS")
     print("="*60)
-    print(f"Total frames attempted: {len(test_frames)}")
+    print(f"Total frames attempted: {(len(test_images)-skipped_no_gt)}")
     print(f"Successful localizations: {len(errors)}")
-    print(f"Success rate: {len(errors)/len(test_frames)*100:.1f}%")
+    print(f"Success rate: {len(errors)/(len(test_images)-skipped_no_gt)*100:.1f}%")
     
     if len(errors) > 0:
         print(f"\nLocalization Accuracy:")
@@ -575,7 +599,7 @@ if __name__ == "__main__":
             'timings_extract': np.array(timings['extract']),
             'timings_match': np.array(timings['match']),
             'timings_pnp': np.array(timings['pnp']),
-            'success_rate': len(errors)/len(test_frames)
+            'success_rate': len(errors)/(len(test_images)-skipped_no_gt)
         }
         
         if len(pose_uncertainties) > 0:
@@ -604,39 +628,37 @@ if __name__ == "__main__":
                 'n_inliers', 'match_spread_normalized', 'match_std_x', 'match_std_y',
                 'depth_mean', 'depth_std', 'depth_relative_std', 'depth_range',
                 'n_quadrants_active', 'quadrant_entropy', 'mean_inverse_depth', 'condition_estimate',
+            ]
+
+            map_quality_feature_names = [
                 'mean_inlier_track_length', 'median_inlier_track_length',
                 'mean_inlier_ba_error', 'median_inlier_ba_error',
-                'frac_high_quality_inliers', 
-                # Image quality features
+                'frac_high_quality_inliers'
+            ]
+
+            img_quality_feature_names = [
                 'img_blur_score', 'img_brightness', 'img_contrast', 
                 'img_edge_density', 'img_histogram_uniformity'
-
             ]
             
             for feat_name in geom_feature_names:
                 key = f'geom_{feat_name}'
                 if key in pose_uncertainties[0]:
                     df_data[feat_name] = [u[key] for u in pose_uncertainties]
-            
+
+            for feat_name in map_quality_feature_names:
+                if feat_name in pose_uncertainties[0]:
+                    df_data[feat_name] = [u[feat_name] for u in pose_uncertainties]
+
+            for feat_name in img_quality_feature_names:
+                if feat_name in pose_uncertainties[0]:
+                    df_data[feat_name] = [u[key] for u in pose_uncertainties]
+
             uncertainty_df = pd.DataFrame(df_data)
             
-            uncertainty_df.to_csv('results/fr3_uncertainty_with_geometry.csv', index=False)
+            uncertainty_df.to_csv('results/fr3_uncertainty550.csv', index=False)
             print("✓ Saved detailed data to results/xxx.csv")
             print(f"  Total columns: {len(uncertainty_df.columns)}")
-            print(f"  Geometric features included: {len(geom_feature_names)}")
-            
-            # Quick correlation check
-            if 'match_spread_normalized' in uncertainty_df.columns:
-                from scipy.stats import pearsonr
-                
-                r_spread, p_spread = pearsonr(uncertainty_df['match_spread_normalized'], uncertainty_df['error_m'])
-                r_depth, p_depth = pearsonr(uncertainty_df['depth_relative_std'], uncertainty_df['error_m'])
-                r_quad, p_quad = pearsonr(uncertainty_df['n_quadrants_active'], uncertainty_df['error_m'])
-                
-                print(f"\n  Quick correlation with error:")
-                print(f"    Match spread:       r={r_spread:+.3f}, p={p_spread:.2e}")
-                print(f"    Depth variance:     r={r_depth:+.3f}, p={p_depth:.2e}")
-                print(f"    Active quadrants:   r={r_quad:+.3f}, p={p_quad:.2e}")
     
     MemoryMonitor.print_memory("After continuous localization")
     

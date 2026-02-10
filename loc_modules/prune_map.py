@@ -49,7 +49,7 @@ class MapPruner:
         colmap_path = Path(colmap_path)
         
         # Load points3D.txt
-        points = []
+        self.points = []
         with open(colmap_path / "points3D.txt", 'r') as f:
             for line in f:
                 if line.startswith('#') or not line.strip():
@@ -59,6 +59,7 @@ class MapPruner:
                 if len(parts) >= 8:
                     point_id = int(parts[0])
                     x, y, z = map(float, parts[1:4])
+                    error = float(parts[7])  # BA reprojection error
                     
                     # Parse track
                     track = []
@@ -68,10 +69,12 @@ class MapPruner:
                             kp_idx = int(parts[i+1])
                             track.append((img_id, kp_idx))
                     
-                    points.append({
+                    self.points.append({
                         'id': point_id,
                         'xyz': np.array([x, y, z]),
-                        'track': track
+                        'track': track, 
+                        'track_length': len(track),  # NEW: Store track length
+                        'ba_error': error  # NEW: Store BA reprojection error
                     })
         
         # Load images.txt
@@ -91,7 +94,7 @@ class MapPruner:
         co_visibility = {}
         map_idx = 0
         
-        for point in points:
+        for point in self.points:
             if not point['track']:
                 continue
             
@@ -115,7 +118,7 @@ class MapPruner:
         return co_visibility
     
     def build_visibility_matrix(self):
-        """Build sparse point × image visibility matrix (CSR format)."""
+        """Build sparse point x image visibility matrix (CSR format)."""
         print("Building sparse visibility matrix...")
         
         num_points = self.n_points
@@ -227,6 +230,111 @@ class MapPruner:
             print(f"  ERROR: Duplicate selections detected!")
         
         return selected_array
+
+
+
+    def greedy_select_w_track_length(self, k):        
+        """Greedy selection considering track length and BA error."""
+        print(f"\n{'='*60}")
+        print(f"GREEDY SELECTION WITH TRACK LENGTH AND BA ERROR")
+        print(f"{'='*60}")
+        print(f"Selecting {k}/{self.n_points} points")
+        print(f"Coverage target: {self.b_cover} points per frame")
+
+
+        # Build visibility matrix
+        V = self.build_visibility_matrix()
+        num_points, num_images = V.shape
+        
+        # Track frames' current coverage counts
+        current_cov = np.zeros(num_images, dtype=np.int32)
+        selected = []
+        remaining = np.ones(num_points, dtype=bool)
+        track_length = np.array([p['track_length'] for p in self.points], dtype=np.float32)
+        ba_error = np.array([p['ba_error'] for p in self.points], dtype=np.float32)
+
+
+        for i in tqdm(range(k), desc="Selecting points"):
+            # Compute which image slots still give extra coverage
+            remaining_capacity = (current_cov < self.b_cover).astype(np.uint8)
+            
+            # Compute marginal gain for REMAINING points only
+            # Get indices of remaining points
+            remaining_indices = np.where(remaining)[0]
+            
+            if len(remaining_indices) == 0:
+                print(f"\nStopping early at {len(selected)} points (no remaining points)")
+                break
+            
+            # Compute gains only for remaining points
+            V_remaining = V[remaining_indices, :]
+            gains_remaining = (V_remaining.multiply(remaining_capacity)).sum(axis=1).A.squeeze()
+            
+            # Handle 1D case
+            if gains_remaining.ndim == 0:
+                gains_remaining = np.array([gains_remaining])
+
+            track_length_remaining = track_length[remaining_indices]
+            ba_error_remaining = ba_error[remaining_indices]
+
+
+            max_track = track_length_remaining.max()
+            min_ba = ba_error_remaining.min()
+            max_ba = ba_error_remaining.max()
+
+
+            quality = (track_length_remaining / max_track) / (1 + (ba_error_remaining - min_ba) / (max_ba - min_ba + 1e-6))
+
+            alpha = 0.1
+            score = gains_remaining * (1 + alpha * quality)
+            
+            # Find best among remaining
+            best_relative_idx = score.argmax()
+            best_gain = gains_remaining[best_relative_idx]
+            
+            if best_gain <= 0:
+                print(f"\nStopping early at {len(selected)} points (no more gainful points)")
+                break
+
+            
+            # Map back to original index
+            best_idx = remaining_indices[best_relative_idx]
+            
+            selected.append(int(best_idx))
+            remaining[best_idx] = False
+            
+            # Update coverage using sparse row (fast)
+            img_indices = V[best_idx].indices  # images where point is visible
+            current_cov[img_indices] += 1
+            
+            # Progress update
+            if (i + 1) % 5000 == 0:
+                print(f"\n  Progress: {i+1}/{k} points")
+                print(f"    Avg coverage: {current_cov.mean():.1f}")
+                print(f"    Min coverage: {current_cov.min()}")
+                print(f"    Max coverage: {current_cov.max()}")
+                print(f"    Remaining points: {remaining.sum()}")
+
+        print(f"\n{'='*60}")
+        print(f"SELECTION COMPLETE")
+        print(f"{'='*60}")
+        print(f"Selected: {len(selected)} points")
+        print(f"Coverage stats:")
+        print(f"  Average: {current_cov.mean ():.1f} points per frame")
+        print(f"  Min:     {current_cov.min()} points per frame")
+
+        selected_array = np.array(selected, dtype=np.int32)
+        
+        # Verify uniqueness
+        unique_selected = len(np.unique(selected_array))
+        print(f"\nVerification:")
+        print(f"  Total selected: {len(selected_array)}")
+        print(f"  Unique selected: {unique_selected}")
+        
+        if unique_selected < len(selected_array):
+            print(f"  ERROR: Duplicate selections detected!")
+        
+        return selected_array
     
     def save_pruned_map(self, selected_indices, output_path):
         """Save pruned map with selected points."""
@@ -267,26 +375,15 @@ class MapPruner:
 
 
 if __name__ == "__main__":
-    import sys
     
-    # Allow command line override for dataset
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "fr3"
-    
-    if dataset == "fr1":
-        MAP_NPZ = 'resources/tum_fr1/map_databases/tumfr1_map_train.npz'
-        COLMAP_DIR = 'resources/tum_fr1/project_files'
-        OUTPUT_NPZ = 'resources/tum_fr1/map_databases/tumfr1_map_train_pruned50.npz'
-        REDUCTION = 0.50
-        B_COVER = 480  # 50% of original mean (963)
-    else:  # fr3
-        MAP_NPZ = 'resources/tum_fr3/map_databases/tumfr3_map_train.npz'
-        COLMAP_DIR = 'resources/tum_fr3/project_files'
-        OUTPUT_NPZ = 'resources/tum_fr3/map_databases/tumfr3_map_train_pruned40.npz'
-        REDUCTION = 0.40
-        B_COVER = 2000  # Conservative for FR3
+    MAP_NPZ = 'resources/tum_fr3/map_databases/tum_fr3_master.npz'
+    COLMAP_DIR = 'resources/tum_fr3/project_files'
+    OUTPUT_NPZ = 'resources/tum_fr3/map_databases/tum_fr3_pruned40.npz'
+    REDUCTION = 0.40
+    B_COVER = 2000  # Conservative for FR3
     
     print("="*60)
-    print(f"MAP PRUNING - {dataset.upper()}")
+    print(f"MAP PRUNING ")
     print("="*60)
     
     # Load and initialize
@@ -297,7 +394,7 @@ if __name__ == "__main__":
     print(f"\nTarget: {target_k} points ({REDUCTION*100:.0f}% reduction)")
     
     # Sparse greedy selection
-    selected = pruner.greedy_select_sparse(target_k)
+    selected = pruner.greedy_select_w_track_length(target_k)
     
     # Save
     pruner.save_pruned_map(selected, OUTPUT_NPZ)
@@ -306,6 +403,3 @@ if __name__ == "__main__":
     print("DONE")
     print("="*60)
     print(f"\nNext steps:")
-    print(f"1. Rebuild vocabulary tree with: aux_tasks/vocabTree.py")
-    print(f"2. Test localization accuracy")
-    print(f"3. Compare with original map")

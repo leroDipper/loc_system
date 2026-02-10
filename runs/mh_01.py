@@ -39,10 +39,12 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/proj_files/colmap_to_gt_transform.json')
+    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
     EUROC_DATASET_PATH = 'resources/mh_01'
-    N_TRAIN_IMAGES = 0  # Number of images used for map building
+    N_TRAIN_IMAGES = 2900
+
+    test_dataset_path = 'resources/mh_01/images'
 
     gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
         gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
@@ -62,21 +64,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    # Load COLMAP image order to determine train/test split
-    colmap_images = load_colmap_image_names('resources/mh_01/proj_files/images.txt')
-    train_images = set(colmap_images[:N_TRAIN_IMAGES])
-    test_images = set(colmap_images[N_TRAIN_IMAGES:])
-    
-    print(f"COLMAP processed {len(colmap_images)} images total")
-    print(f"Train set: {len(train_images)} images")
-    print(f"Test set: {len(test_images)} images")
-
-    # Load existing vocabulary (built with FP32)
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    # Load existing FP32 map (built from train images only)
-    data = np.load('resources/mh_01/map_databases/mh_01_train.npz')
+    data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
@@ -93,7 +84,6 @@ if __name__ == "__main__":
                     [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
-    # Build matcher
     print("\nBuilding vocabulary matcher...")
     t_start = time.time()
     matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
@@ -102,21 +92,32 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After building matcher")
 
-    # ===================================================================
-    # CONTINUOUS LOCALISATION TEST
-    # ===================================================================
     print("\n" + "="*60)
     print("INT8 QUERIES vs FP32 MAP - EUROC mh_01")
     print("="*60)
-    
+
+    # Load COLMAP reconstructed images
+    colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+    colmap_set = set(colmap_images)
+
+    # Get chronological order
+    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
+    all_filenames = [os.path.basename(f) for f in all_frames]
+
+    # Filter to only reconstructed images
+    reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+    # Take remaining after first N_TRAIN_IMAGES
+    test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+        
     print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
+    print(f"COLMAP reconstructed {len(colmap_set)} total images")  # NEW LINE
     print(f"Testing with {len(test_images)} held-out images (INT8)\n")
     
     errors = []
     match_counts = []
     timings = {'extract': [], 'match': [], 'pnp': []}
 
-    # Debug counters
     skipped_no_gt = 0
     skipped_no_image = 0
     skipped_too_few_matches = 0
@@ -124,64 +125,53 @@ if __name__ == "__main__":
     rejected_low_inliers = 0
     rejected_reproj_error = 0
 
-    # Test only on held-out test images
     test_image_list = sorted(list(test_images))
     
-    for i, frame_name in enumerate(test_image_list):
-        frame_path = os.path.join(EUROC_DATASET_PATH, 'images', frame_name)
+    for i, frame_path in enumerate(test_image_list):
+        frame_name = os.path.basename(frame_path)
         
-        # Skip if no ground truth available
         if frame_name not in gt_poses:
             skipped_no_gt += 1
             continue
         
-        # Read and process frame
         frame = cv2.imread(frame_path)
         if frame is None:
             skipped_no_image += 1
             continue
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Extract features
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]
         keypoints = features['keypoints'].cpu().numpy()
         descriptors = features['descriptors'].cpu().numpy()
-
-        
-
         descriptors = np.clip((descriptors + 0.5) * 255.0, 0, 255).astype(np.uint8)
         
-        # Match
         t_start = time.time()
         query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
         t_match = time.time() - t_start
         
-        # Filter unique
         query_to_map = {}
         for q_idx, m_idx, dist in zip(query_idx, map_idx, distances):
             if q_idx not in query_to_map or dist < query_to_map[q_idx][1]:
                 query_to_map[q_idx] = (m_idx, dist)
         
-        # Build 2D-3D correspondences
         matched_3d = []
         matched_2d = []
         for q_idx, (m_idx, dist) in query_to_map.items():
             matched_3d.append(map_3d_points[m_idx])
             matched_2d.append(keypoints[q_idx])
         
-        if len(matched_3d) < 4:  # Need at least 4 points for PnP
+        if len(matched_3d) < 4:
             skipped_too_few_matches += 1
             continue
             
         matched_3d = np.array(matched_3d, dtype=np.float32)
         matched_2d = np.array(matched_2d, dtype=np.float32)
         
-        # PnP
         t_start = time.time()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             matched_3d,
@@ -193,17 +183,17 @@ if __name__ == "__main__":
         )
         t_pnp = time.time() - t_start
         
-        # Record timings
         timings['extract'].append(t_extract)
         timings['match'].append(t_match)
         timings['pnp'].append(t_pnp)
         
         if not success or len(inliers) < 6:
-            pnp_failed += 1
-            rejected_low_inliers += 1
+            if not success:
+                pnp_failed += 1
+            else:
+                rejected_low_inliers += 1
             continue
             
-        # Check reprojection error of inliers
         inlier_points_3d = matched_3d[inliers.flatten()]
         inlier_points_2d = matched_2d[inliers.flatten()]
         
@@ -211,7 +201,6 @@ if __name__ == "__main__":
         reproj_errors = np.linalg.norm(inlier_points_2d - projected.squeeze(), axis=1)
         median_reproj_error = np.median(reproj_errors)
         
-        # Reject if median reprojection error too high
         if median_reproj_error > 5.0:
             rejected_reproj_error += 1
             continue
@@ -220,49 +209,49 @@ if __name__ == "__main__":
         C_colmap = -R_cam.T @ tvec.flatten()
         C_metres = GroundTruthParams.colmap_to_meters(C_colmap, scale, R, t)
         
-        # Accept localisation
         C_gt = gt_poses[frame_name]
         error_metres = np.linalg.norm(C_metres - C_gt)
         
         errors.append(error_metres)
         match_counts.append(len(inliers))
         
-        if (i + 1) % 20 == 0:
+        if (i + 1) % 50 == 0:
             print(f"Frame {i+1}/{len(test_image_list)}: "
                   f"Error={error_metres:.3f}m, "
                   f"Matches={len(inliers)}/{len(matched_3d)}")
             MemoryMonitor.print_memory(f"After {i+1} frames")
 
-
-    # Add this debug right after a successful localization (around line 240):
-    print(f"\nDEBUG frame {frame_name}:")
-    print(f"  C_colmap (raw): {C_colmap}")
-    print(f"  C_metres (transformed): {C_metres}")
-    print(f"  C_gt (ground truth): {C_gt}")
-    print(f"  Scale: {scale}, Applied: {scale * np.linalg.norm(C_colmap):.3f}")
-
-    print(f"\nDebug Statistics:")
-    print(f"  Skipped (no GT): {skipped_no_gt}")
-    print(f"  Skipped (no image): {skipped_no_image}")
-    print(f"  Skipped (too few matches): {skipped_too_few_matches}")
-    print(f"  PnP failed: {pnp_failed}")
-    print(f"  Rejected (low inliers): {rejected_low_inliers}")
-    print(f"  Rejected (high reproj error): {rejected_reproj_error}")
     
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALISATION RESULTS")
+    print("FAILURE BREAKDOWN")
     print("="*60)
-    print(f"Total test frames: {len(test_image_list)}")
-    print(f"Successful localisations: {len(errors)}")
-    print(f"Success rate: {len(errors)/len(test_image_list)*100:.1f}%")
+    print(f"Skipped - no ground truth:      {skipped_no_gt}")
+    print(f"Skipped - image failed to load: {skipped_no_image}")
+    print(f"Skipped - too few matches (<4): {skipped_too_few_matches}")
+    print(f"PnP RANSAC failed:              {pnp_failed}")
+    print(f"Rejected - low inliers (<6):    {rejected_low_inliers}")
+    print(f"Rejected - high reproj. error:  {rejected_reproj_error}")
+    print(f"Total failures:                 {len(test_image_list) - len(errors)}")
+    print(f"Sanity check (should = {len(test_image_list)}): {len(errors) + skipped_no_gt + skipped_no_image + skipped_too_few_matches + pnp_failed + rejected_low_inliers + rejected_reproj_error}")
+    
+    print("\n" + "="*60)
+    print("LOCALIZATION ACCURACY")
+    print("="*60)
+    print(f"Total test frames: {(len(test_image_list)-skipped_no_gt)}")
+    print(f"Successful localizations: {len(errors)}")
+    print(f"Success rate: {len(errors)/(len(test_image_list)-skipped_no_gt)*100:.1f}%")
+    print("="*60)
     
     if len(errors) > 0:
-        print(f"\nLocalisation Accuracy:")
+        print(f"\nLocalization Accuracy:")
         print(f"  Mean error:   {np.mean(errors):.4f} m ({np.mean(errors)*100:.2f} cm)")
         print(f"  Median error: {np.median(errors):.4f} m ({np.median(errors)*100:.2f} cm)")
         print(f"  Std error:    {np.std(errors):.4f} m")
         print(f"  Max error:    {np.max(errors):.4f} m")
         print(f"  Min error:    {np.min(errors):.4f} m")
+        
+        below_20cm = np.sum(np.array(errors) <= 0.20)
+        print(f"  Frames within 20cm: {below_20cm}/{len(errors)} ({below_20cm/len(errors)*100:.1f}%)")
         
         print(f"\nMatches per frame:")
         print(f"  Mean: {np.mean(match_counts):.1f}")
@@ -277,15 +266,15 @@ if __name__ == "__main__":
         print(f"  Total:              {total_time*1000:.2f} ms")
         print(f"  Average FPS:        {1.0/total_time:.2f}")
 
-        # np.savez('results/mh_01_train_test_errors.npz', 
+        # np.savez('results/mh_01_fp32_errors.npz', 
         #     errors=np.array(errors),
         #     match_counts=np.array(match_counts),
         #     timings_extract=np.array(timings['extract']),
         #     timings_match=np.array(timings['match']),
         #     timings_pnp=np.array(timings['pnp']),
         #     success_rate=len(errors)/len(test_image_list))
-        # print("✓ Saved errors to results/mh_01_train_test_errors.npz")
+        # print("✓ Saved errors to results/mh_01_fp32_errors.npz")
     
-    MemoryMonitor.print_memory("After continuous localisation")
+    MemoryMonitor.print_memory("After continuous localization")
     
     print("="*60)

@@ -1,7 +1,10 @@
 from map_unc.map_build import MapBuilder
+import glob
+import os
 
-# Get COLMAP images in order
-with open('resources/mh_01/proj_files/images.txt', 'r') as f:
+# Get all COLMAP images (successfully reconstructed)
+print("Loading COLMAP reconstruction...")
+with open('resources/mh_01/project_files/images.txt', 'r') as f:
     colmap_images = []
     for line in f:
         if line.startswith('#') or not line.strip():
@@ -10,19 +13,39 @@ with open('resources/mh_01/proj_files/images.txt', 'r') as f:
         if len(parts) == 10:
             colmap_images.append(parts[9])
 
-# Split into train/test
-train_images = set(colmap_images[:2900]) 
-test_images = set(colmap_images[2900:])   
+colmap_set = set(colmap_images)
+print(f"COLMAP successfully reconstructed {len(colmap_set)} images")
 
-print(f"Train: {len(train_images)} images")
-print(f"Test: {len(test_images)} images")
+# Get filename order (chronological by timestamp)
+print("\nGetting chronological order from filenames...")
+all_frames = sorted(glob.glob('resources/mh_01/images/*.png'))
+all_filenames = [os.path.basename(f) for f in all_frames]
+print(f"Found {len(all_filenames)} total images in dataset")
+
+print("\nSelecting first chronological images that were reconstructed...")
+train_images = []
+for fname in all_filenames:
+    if fname in colmap_set:
+        train_images.append(fname)
+    if len(train_images) == 2900:
+        break
+
+train_images = set(train_images)
+
+# Test images: remaining chronological images that were reconstructed
+test_images = set()
+for fname in all_filenames[len(train_images):]:
+    if fname in colmap_set:
+        test_images.add(fname)
+
+
 
 # Build map using only train images
 map_builder = MapBuilder()
 map_3d_points, map_descriptors, map_track_lengths, map_ba_errors = map_builder.build_map_database(
-    map_files='resources/mh_01/proj_files',
+    map_files='resources/mh_01/project_files',
     dataset_path='resources/mh_01/images',
-    descriptors_path='resources/mh_01/proj_files/descriptors',
-    save_to='resources/mh_01/map_databases/mh_01_train.npz',
+    descriptors_path='resources/mh_01/project_files/descriptors',
+    save_to='resources/mh_01/map_databases/mh_01_master.npz',
     train_images=train_images  # Only use train images
 )

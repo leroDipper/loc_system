@@ -202,8 +202,8 @@ def main():
     
     # Paths (update these to your actual paths)
     gt_path = 'resources/mh_03/data.csv'
-    colmap_path = 'resources/mh_03/project_files/images.txt'
-    output_dir = 'resources/mh_03/project_files'
+    colmap_path = 'resources/mh_03/project_files_og/images.txt'
+    output_dir = 'resources/mh_03/project_files_og'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -215,7 +215,7 @@ def main():
     
     # Find corresponding frames
     print("\nMatching frames (time tolerance: 0.02s)...")
-    gt_points, colmap_points, matches = find_corresponding_poses(gt_data, colmap_poses)
+    gt_points, colmap_points, matches = find_corresponding_poses(gt_data, colmap_poses, time_tolerance=0.01)
     print(f"Found {len(matches)} matching frames")
     
     if len(matches) < 3:

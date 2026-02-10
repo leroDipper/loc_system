@@ -15,36 +15,29 @@ import glob
 def compute_image_quality_features(frame_gray):
     """
     Compute image quality metrics for a grayscale frame.
-    
-    Args:
-        frame_gray: Grayscale image (H x W) numpy array
-        
-    Returns:
-        dict with image quality features
     """
     features = {}
     
     # 1. Blur score (Laplacian variance)
-    # Higher = sharper image
     laplacian = cv2.Laplacian(frame_gray, cv2.CV_64F)
-    features['blur_score'] = laplacian.var()
+    features['img_blur_score'] = laplacian.var()  # Changed from 'blur_score'
     
     # 2. Brightness (mean intensity)
-    features['brightness'] = np.mean(frame_gray)
+    features['img_brightness'] = np.mean(frame_gray)  # Changed from 'brightness'
     
     # 3. Contrast (std intensity)
-    features['contrast'] = np.std(frame_gray)
+    features['img_contrast'] = np.std(frame_gray)  # Changed from 'contrast'
     
     # 4. Edge density (Canny edges)
     edges = cv2.Canny(frame_gray, 50, 150)
-    features['edge_density'] = np.sum(edges > 0) / edges.size
+    features['img_edge_density'] = np.sum(edges > 0) / edges.size  # Changed from 'edge_density'
     
     # 5. Histogram uniformity (entropy of intensity distribution)
     hist = cv2.calcHist([frame_gray], [0], None, [256], [0, 256])
     hist = hist.flatten() / hist.sum()
-    hist = hist[hist > 0]  # Remove zero bins
+    hist = hist[hist > 0]
     entropy = -np.sum(hist * np.log2(hist))
-    features['histogram_uniformity'] = entropy / 8.0  # Normalize
+    features['img_histogram_uniformity'] = entropy / 8.0  # Changed from 'histogram_uniformity'
     
     return features
 
@@ -184,7 +177,9 @@ if __name__ == "__main__":
     scale, R, t = GroundTruthParams.load_transformation('resources/mh_03/project_files/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/mh_03/images/camera_rectified.yaml'
     EUROC_DATASET_PATH = 'resources/mh_03'
-    N_TRAIN_IMAGES = 0  # Number of images used for map building
+    N_TRAIN_IMAGES = 2000  # Number of images used for map building
+
+    test_dataset_path = 'resources/mh_03/images'
 
     gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
         gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
@@ -204,21 +199,13 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    # Load COLMAP image order to determine train/test split
-    colmap_images = load_colmap_image_names('resources/mh_03/project_files/images.txt')
-    train_images = set(colmap_images[:N_TRAIN_IMAGES])
-    test_images = set(colmap_images[N_TRAIN_IMAGES:])
-    
-    print(f"COLMAP processed {len(colmap_images)} images total")
-    print(f"Train set: {len(train_images)} images")
-    print(f"Test set: {len(test_images)} images")
-
-    vocabulary = 'resources/mh_03/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/mh_03/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_03/map_databases/mh_03_train.npz')
+    data = np.load('resources/mh_03/map_databases/mh_03_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
+    
 
     # Load quality metrics (with backward compatibility)
     if 'track_lengths' in data and 'ba_errors' in data:
@@ -259,9 +246,10 @@ if __name__ == "__main__":
     print("\nLoading uncertainty estimation model...")
     try:
         uncertainty_estimator = PoseUncertaintyEstimator(
-            model_path="results/match_confidence_model.joblib",
+            model_path="results/error_prediction_model.joblib",
             sigma_base=1.0,
-            min_confidence=0.3,
+            min_error=0.5,
+            max_error=10.0,
             use_reprojection_refinement=True
         )
     except FileNotFoundError:
@@ -269,14 +257,28 @@ if __name__ == "__main__":
         uncertainty_estimator = None
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALIZATION TEST - MH_03 SEQUENCE")
+    print("CONTINUOUS LOCALISATION TEST - mh_03 SEQUENCE")
     print("="*60)
     
-     # Test only on held-out test images
-    test_image_list = sorted(list(test_images))
+    # Load COLMAP reconstructed images
+    colmap_images = load_colmap_image_names('resources/mh_03/project_files/images.txt')
+    colmap_set = set(colmap_images)
+
+    # Get chronological order
+    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
+    all_filenames = [os.path.basename(f) for f in all_frames]
+
+    # Filter to only reconstructed images
+    reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+    # Take remaining after first N_TRAIN_IMAGES
+    test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+        
+    print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
+    print(f"COLMAP reconstructed {len(colmap_set)} total images")  # NEW LINE
+    print(f"Testing with {len(test_images)} held-out images (INT8)\n")
     
     
-    print(f"Testing with {len(test_image_list)} remaining images\n")
     
     errors = []
     match_counts = []
@@ -292,9 +294,9 @@ if __name__ == "__main__":
     rejected_reproj_error = 0
 
     
-    for i, frame_name in enumerate(test_image_list):
-        frame_path = os.path.join(EUROC_DATASET_PATH, 'images', frame_name)
-        
+    for i, frame_path in enumerate(test_images):
+        frame_name = os.path.basename(frame_path)
+
         if frame_name not in gt_poses:
             continue
         
@@ -304,12 +306,12 @@ if __name__ == "__main__":
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # ========== COMPUTE IMAGE QUALITY FEATURES ==========
-        img_quality = compute_image_quality_features(frame_gray)
+        img_quality_features = compute_image_quality_features(frame_gray)
 
 
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=550)
         t_extract = time.time() - t_start
         
         features = output[0]
@@ -403,8 +405,7 @@ if __name__ == "__main__":
                 rejected_reproj_error += 1
                 continue
 
-
-            # NEW SECTION: Compute aggregate quality metrics for inlier map points
+      
             map_quality_features = {}
 
             if has_quality_metrics:
@@ -449,9 +450,6 @@ if __name__ == "__main__":
                 image_shape=(frame_gray.shape[0], frame_gray.shape[1])
             )
             
-            # Add image quality features
-            for key, val in img_quality.items():
-                geom_features[f'img_{key}'] = val
             
             # Log geometric features + image quality
             geom_features['frame'] = frame_name
@@ -482,10 +480,6 @@ if __name__ == "__main__":
                 uncertainty_result = None
                 
                 try:
-
-                    # Merge geometric and map quality features
-                    combined_features = {**geom_features, **map_quality_features}
-
                     uncertainty_result = uncertainty_estimator.estimate_pose_uncertainty(
                         points_3d=inlier_points_3d,
                         points_2d=inlier_points_2d,
@@ -497,7 +491,9 @@ if __name__ == "__main__":
                         n_candidates=inlier_n_candidates,
                         reprojection_errors=reproj_errors,
                         detector_scores=detector_scores,
-                        geometric_features=combined_features,  # Pass geometric features
+                        geometric_features= geom_features, 
+                        map_quality_features=map_quality_features,
+                        image_quality_features=img_quality_features,
                         filter_low_confidence=False
                     )
                     
@@ -513,10 +509,20 @@ if __name__ == "__main__":
                     }
                     
                     # Add geometric features to uncertainty entry
-                    for key, val in combined_features.items():
+                    for key, val in geom_features.items():
                         if key != 'frame':
                             unc_entry[f'geom_{key}'] = val
                     
+                    # Add map quality features to uncertainty entry
+                    for key, val in map_quality_features.items():
+                        unc_entry[key] = val  
+                    
+                    # Add image quality features to uncertainty entry
+                    for key, val in img_quality_features.items():
+                        unc_entry[key] = val  
+
+
+
                     pose_uncertainties.append(unc_entry)
                     
                 except Exception as e:
@@ -528,15 +534,15 @@ if __name__ == "__main__":
             errors.append(error_meters)
             match_counts.append(len(inliers))
             
-            if (i + 1) % 20 == 0:
+            if (i + 1) % 50 == 0:
                 uncertainty_str = ""
                 if uncertainty_result is not None:
                     conf = np.mean(uncertainty_result['confidence'])
                     sigma = uncertainty_result['info']['mean_pixel_uncertainty']
                     spread = geom_features['match_spread_normalized']
-                    uncertainty_str = f", Conf={conf:.3f}, σ={sigma:.2f}px, Spread={spread:.2f}"
+                    uncertainty_str = f", Conf={conf:.3f}, sigma={sigma:.2f}px, Spread={spread:.2f}"
                 
-                print(f"Frame {i+1}/{len(test_image_list)}: "
+                print(f"Frame {i+1}/{len(test_images)}: "
                       f"Error={error_meters:.3f}m, "
                       f"Matches={len(inliers)}/{len(matched_3d)}"
                       f"{uncertainty_str}")
@@ -544,14 +550,14 @@ if __name__ == "__main__":
             rejected_low_inliers += 1
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALIZATION RESULTS (WITH GEOMETRIC FEATURES)")
+    print("CONTINUOUS LOCALISATION RESULTS")
     print("="*60)
-    print(f"Total frames attempted: {len(test_image_list)}")
-    print(f"Successful localizations: {len(errors)}")
-    print(f"Success rate: {len(errors)/len(test_image_list)*100:.1f}%")
+    print(f"Total frames attempted: {(len(test_images)-skipped_no_gt)}")
+    print(f"Successful localisations: {len(errors)}")
+    print(f"Success rate: {len(errors)/(len(test_images)-skipped_no_gt)*100:.1f}%")
     
     if len(errors) > 0:
-        print(f"\nLocalization Accuracy:")
+        print(f"\nlocalisation Accuracy:")
         print(f"  Mean error:   {np.mean(errors):.4f} m ({np.mean(errors)*100:.2f} cm)")
         print(f"  Median error: {np.median(errors):.4f} m ({np.median(errors)*100:.2f} cm)")
         print(f"  Std error:    {np.std(errors):.4f} m")
@@ -595,7 +601,7 @@ if __name__ == "__main__":
             'timings_extract': np.array(timings['extract']),
             'timings_match': np.array(timings['match']),
             'timings_pnp': np.array(timings['pnp']),
-            'success_rate': len(errors)/len(test_image_list)
+            'success_rate': len(errors)/(len(test_images) - skipped_no_gt)
         }
         
         if len(pose_uncertainties) > 0:
@@ -624,10 +630,15 @@ if __name__ == "__main__":
                 'n_inliers', 'match_spread_normalized', 'match_std_x', 'match_std_y',
                 'depth_mean', 'depth_std', 'depth_relative_std', 'depth_range',
                 'n_quadrants_active', 'quadrant_entropy', 'mean_inverse_depth', 'condition_estimate',
+            ]
+
+            map_quality_feature_names = [
                 'mean_inlier_track_length', 'median_inlier_track_length',
                 'mean_inlier_ba_error', 'median_inlier_ba_error',
-                'frac_high_quality_inliers',
-                # Image quality features
+                'frac_high_quality_inliers'
+            ]
+
+            img_quality_feature_names = [
                 'img_blur_score', 'img_brightness', 'img_contrast', 
                 'img_edge_density', 'img_histogram_uniformity'
             ]
@@ -636,27 +647,25 @@ if __name__ == "__main__":
                 key = f'geom_{feat_name}'
                 if key in pose_uncertainties[0]:
                     df_data[feat_name] = [u[key] for u in pose_uncertainties]
-            
+
+
+            for feat_name in map_quality_feature_names:
+                if feat_name in pose_uncertainties[0]:
+                    df_data[feat_name] = [u[feat_name] for u in pose_uncertainties]
+
+            for feat_name in img_quality_feature_names:
+                if feat_name in pose_uncertainties[0]:
+                    df_data[feat_name] = [u[key] for u in pose_uncertainties]
+
             uncertainty_df = pd.DataFrame(df_data)
             
-            uncertainty_df.to_csv('results/mh_03_uncertainty_with_geometry.csv', index=False)
+            uncertainty_df.to_csv('results/mh_03_uncertainty550.csv', index=False)
             print("✓ Saved detailed data to results/xxx.csv")
             print(f"  Total columns: {len(uncertainty_df.columns)}")
-            print(f"  Geometric features included: {len(geom_feature_names)}")
             
-            # Quick correlation check
-            if 'match_spread_normalized' in uncertainty_df.columns:
-                from scipy.stats import pearsonr
+            
                 
-                r_spread, p_spread = pearsonr(uncertainty_df['match_spread_normalized'], uncertainty_df['error_m'])
-                r_depth, p_depth = pearsonr(uncertainty_df['depth_relative_std'], uncertainty_df['error_m'])
-                r_quad, p_quad = pearsonr(uncertainty_df['n_quadrants_active'], uncertainty_df['error_m'])
-                
-                print(f"\n  Quick correlation with error:")
-                print(f"    Match spread:       r={r_spread:+.3f}, p={p_spread:.2e}")
-                print(f"    Depth variance:     r={r_depth:+.3f}, p={p_depth:.2e}")
-                print(f"    Active quadrants:   r={r_quad:+.3f}, p={p_quad:.2e}")
     
-    MemoryMonitor.print_memory("After continuous localization")
+    MemoryMonitor.print_memory("After continuous localisation")
     
     print("="*60)
