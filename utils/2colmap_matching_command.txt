@@ -10,7 +10,7 @@ colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/
 --FeatureMatching.use_gpu 0
 
 
-colmap sequential_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/tum_fr1_2000.db \
+colmap sequential_matcher --database_path /home/leroy/masters_local/loc_system/resources/mh_03/mh_03.db \
 --FeatureMatching.use_gpu 0
 
 colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/tum_fr1/tum_fr1_600.db \

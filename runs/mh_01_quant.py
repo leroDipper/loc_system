@@ -11,6 +11,9 @@ from loc_modules import MapLoader, Localiser
 import yaml
 from test.memory import MemoryMonitor
 import glob
+import onnxruntime as ort
+from loc_modules.onnx_feat import onnx_extractor
+
 
 def load_camera_params(yaml_path):
     """Load camera parameters from YAML file."""
@@ -51,23 +54,18 @@ if __name__ == "__main__":
         image_dir=os.path.join(EUROC_DATASET_PATH, 'images')
     )
 
-    xfeat = None
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+     # Load INT8 ONNX model instead of PyTorch
+    print("Loading INT8 ONNX model...")
+    model='models/xfeat_752x480_int8.onnx'
+    session = ort.InferenceSession(model, providers=['CPUExecutionProvider'])
+    print("✓ model loaded")
 
-    try:
-        xfeat = torch.hub.load('verlab/accelerated_features', 'XFeat', pretrained=True, top_k=4096)
-        xfeat = xfeat.to(device)
-        xfeat.eval()
-    except Exception as e:
-        print(f"Error loading XFeat model: {e}")
-        exit()
+    MemoryMonitor.print_memory("After loading INT8 ONNX model")
 
-    MemoryMonitor.print_memory("After loading XFeat")
-
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_pruned40.bin'
+    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_01/map_databases/mh_01_pruned40.npz')
+    data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
@@ -141,13 +139,11 @@ if __name__ == "__main__":
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         t_start = time.time()
-        with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=250)
+        keypoints, descriptors, _ = onnx_extractor(session, frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
-        features = output[0]
-        keypoints = features['keypoints'].cpu().numpy()
-        descriptors = features['descriptors'].cpu().numpy()
+        
+
         descriptors = np.clip((descriptors + 0.5) * 255.0, 0, 255).astype(np.uint8)
         
         t_start = time.time()

@@ -9,9 +9,9 @@ import yaml
 from pathlib import Path
 
 # ==================== CONFIGURATION ====================
-INPUT_DIR = "/home/leroy-marewangepo/Masters_Stuff/calib/iphone/videos/test_img"
-OUTPUT_DIR = "/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/iphone/test_img"
-SENSOR_YAML = "/home/leroy-marewangepo/Masters_Stuff/calib/iphone/iphone_camera_params.yaml"
+INPUT_DIR = "/home/leroy/Downloads/cam0/data"
+OUTPUT_DIR = "resources/mh_03/images"
+SENSOR_YAML = "/home/leroy/Downloads/cam0/sensor.yaml"
 # =======================================================
 
 

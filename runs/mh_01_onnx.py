@@ -148,8 +148,9 @@ if __name__ == "__main__":
             continue
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        
-        keypoints, descriptors, t_extract = onnx_extractor(session, frame_gray, top_k=200)
+        t_start = time.time()
+        keypoints, descriptors, _ = onnx_extractor(session, frame_gray, top_k=200)
+        t_extract = time.time() - t_start
         
 
          # Convert descriptors to uint8 for matching

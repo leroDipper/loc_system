@@ -238,7 +238,7 @@ class MapPruner:
         print(f"\n{'='*60}")
         print(f"GREEDY SELECTION WITH TRACK LENGTH AND BA ERROR")
         print(f"{'='*60}")
-        print(f"Selecting {k}/{self.n_points} points")
+        print(f"Selecting { k}/{self.n_points} points")
         print(f"Coverage target: {self.b_cover} points per frame")
 
 
@@ -379,8 +379,8 @@ if __name__ == "__main__":
     MAP_NPZ = 'resources/tum_fr3/map_databases/tum_fr3_master.npz'
     COLMAP_DIR = 'resources/tum_fr3/project_files'
     OUTPUT_NPZ = 'resources/tum_fr3/map_databases/tum_fr3_pruned40.npz'
-    REDUCTION = 0.40
-    B_COVER = 2000  # Conservative for FR3
+    REDUCTION = 0.40 
+    B_COVER = 3000  
     
     print("="*60)
     print(f"MAP PRUNING ")

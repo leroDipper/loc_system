@@ -22,13 +22,25 @@ print("="*60)
 print("TRAINING ERROR PREDICTION MODEL (REGRESSION)")
 print("="*60)
 
-# Load data
-df_fr1 = pd.read_csv("results/fr1_uncertainty.csv")
-df_fr3 = pd.read_csv("results/fr3_uncertainty.csv")
-df_mh_01 = pd.read_csv("results/mh_01_uncertainty.csv")
-df_mh_03 = pd.read_csv("results/mh_03_uncertainty.csv")
+df_mh_01_1 = pd.read_csv("results/mh_01_uncertainty.csv")
+df_mh_01_2 = pd.read_csv("results/mh_01_uncertainty350.csv")
+df_mh_01_3 = pd.read_csv("results/mh_01_uncertainty550.csv")
 
-df = pd.concat([df_fr1, df_fr3, df_mh_01, df_mh_03], ignore_index=True)
+df_mh_03_1 = pd.read_csv("results/mh_03_uncertainty.csv")
+df_mh_03_2 = pd.read_csv("results/mh_03_uncertainty350.csv")
+df_mh_03_3 = pd.read_csv("results/mh_03_uncertainty550.csv")
+
+df_mh_01 = pd.concat([df_mh_01_1, df_mh_01_2, df_mh_01_3], ignore_index=True)
+df_mh_03 = pd.concat([df_mh_03_1, df_mh_03_2, df_mh_03_3], ignore_index=True)
+
+
+# Load data
+# df_fr1 = pd.read_csv("results/fr1_uncertainty.csv")
+# df_fr3 = pd.read_csv("results/fr3_uncertainty.csv")
+# df_mh_01 = pd.read_csv("results/mh_01_uncertainty.csv")
+# df_mh_03 = pd.read_csv("results/mh_03_uncertainty.csv")
+
+df = pd.concat([df_mh_01, df_mh_03], ignore_index=True)
 print(f"\nLoaded {len(df)} frames")
 print(f"Columns: {len(df.columns)}")
 
@@ -94,30 +106,49 @@ available_features = [f for f in all_features if f in df.columns]
 missing_features = [f for f in all_features if f not in df.columns]
 
 if missing_features:
-    print(f"\n⚠ Warning: Missing features: {missing_features}")
+    print(f"\n Warning: Missing features: {missing_features}")
     all_features = available_features
 
 # Extract features and target
 X = df[all_features].values
-# After loading data (line 102 in train_descent_comb.py)
 y = df["error_m"].values
 
-# Remove extreme outliers (e.g., errors > 50cm)
-outlier_mask = y < 0.3  # Keep errors below 50cm
+
+
+# 3-sigma rule
+mean_error = y.mean()
+std_error = y.std()
+threshold = mean_error + 3 * std_error
+
+print(f"\nOutlier filtering (3-sigma rule, threshold={threshold*100:.2f}cm):")
+print(f"  Before: {len(y)} frames, mean={mean_error*100:.2f}cm, max={y.max()*100:.2f}cm")
+
+outlier_mask = y < threshold
 X = X[outlier_mask]
 y = y[outlier_mask]
 
-print(f"Removed {(~outlier_mask).sum()} outliers")
-print(f"New dataset size: {len(y)}")
 
-# Handle NaN and inf
-X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
+print(f"  After: {len(y)} frames, mean={y.mean()*100:.2f}cm, max={y.max()*100:.2f}cm")
+print(f"  Removed: {np.sum(~outlier_mask)} extreme outliers")
 
-# Clip extreme values
-for i in range(X.shape[1]):
-    percentile_99 = np.percentile(X[:, i], 99)
-    percentile_1 = np.percentile(X[:, i], 1)
-    X[:, i] = np.clip(X[:, i], percentile_1, percentile_99)
+
+
+# # Remove extreme outliers (e.g., errors > 50cm)
+# outlier_mask = y < 0.3  # Keep errors below 50cm
+# X = X[outlier_mask]
+# y = y[outlier_mask]
+
+# print(f"Removed {(~outlier_mask).sum()} outliers")
+# print(f"New dataset size: {len(y)}")
+
+# # Handle NaN and inf
+# X = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
+
+# # Clip extreme values
+# for i in range(X.shape[1]):
+#     percentile_99 = np.percentile(X[:, i], 99)
+#     percentile_1 = np.percentile(X[:, i], 1)
+#     X[:, i] = np.clip(X[:, i], percentile_1, percentile_99)
 
 print(f"\nFeature matrix: {X.shape}")
 print(f"Target vector: {y.shape}")
@@ -149,7 +180,7 @@ pipeline = Pipeline([
 ])
 
 pipeline.fit(X_train, y_train)
-print("✓ Training complete")
+print("Training complete")
 
 # ============================================================================
 # EVALUATE
@@ -264,8 +295,8 @@ model_data = {
     "feature_importance": feature_importance
 }
 
-joblib.dump(model_data, "results/error_prediction_model.joblib")
-print(f"\n✓ Saved model to results/error_prediction_model.joblib")
+#joblib.dump(model_data, "results/error_prediction_model.joblib")
+print(f"\n Saved model to results/error_prediction_model.joblib")
 
 # ============================================================================
 # VISUALIZE
@@ -311,8 +342,8 @@ axes[1, 1].legend()
 axes[1, 1].grid(alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('results/error_prediction_model.png', dpi=150, bbox_inches='tight')
-print("✓ Saved visualization to results/error_prediction_model.png")
+#plt.savefig('results/error_prediction_model.png', dpi=150, bbox_inches='tight')
+print("Saved visualization to results/error_prediction_model.png")
 
 plt.show()
 

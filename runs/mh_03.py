@@ -64,10 +64,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/mh_03/vocabularies/vocab_tree_master.bin'
+    vocabulary = 'resources/mh_03/vocabularies/vocab_tree_pruned40.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_03/map_databases/mh_03_master.npz')
+    data = np.load('resources/mh_03/map_databases/mh_03_pruned40.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]
@@ -237,9 +237,9 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("LOCALIZATION ACCURACY")
     print("="*60)
-    print(f"Total test frames: {len(test_image_list)}")
+    print(f"Total test frames: {len(test_image_list)-skipped_no_gt}")
     print(f"Successful localizations: {len(errors)}")
-    print(f"Success rate: {len(errors)/len(test_image_list)*100:.1f}%")
+    print(f"Success rate: {len(errors)/(len(test_image_list)-skipped_no_gt)*100:.1f}%")
     print("="*60)
     
     if len(errors) > 0:

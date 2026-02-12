@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
 
     # Load existing vocabulary
-    vocabulary = 'resources/tum_fr3/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/tum_fr3/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
     # Load colmap map
@@ -152,7 +152,7 @@ if __name__ == "__main__":
         # Extract features
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=100)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]

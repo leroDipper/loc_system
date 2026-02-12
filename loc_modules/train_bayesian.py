@@ -99,17 +99,20 @@ print(f"\nTotal training: {len(df_train)} frames (mean: {df_train['error_m'].mea
 features = [
     #"mean_inverse_depth",
     "n_matches",
-    "depth_mean",
-    "match_spread_normalized",
+    #"depth_mean",
+    "depth_range",
+    #"match_spread_normalized",
     "match_std_x",
-    "quadrant_entropy",
-    #"n_inliers",
+    #"quadrant_entropy",
+    "mean_inlier_track_length"
+    "n_inliers",
     #"depth_relative_std",
     "img_blur_score",
     #"img_brightness",
     #"img_contrast",
     #"img_edge_density",
-    "img_histogram_uniformity"
+    "img_histogram_uniformity",
+    "mean_inlier_ba_error"
 ]
 
 # features = [
@@ -451,9 +454,9 @@ print(f"  Within sigma: {within_1sigma*100:.1f}%")
 print(f"  Calibration error: {mae*100:.2f} cm")
 
 if correlation > 0.40 and within_1sigma > 0.65:
-    print("\n✓ Model shows good generalization to held-out data!")
+    print("\n Model shows good generalization to held-out data!")
 elif correlation > 0.35:
-    print("\n⚠ Model shows moderate generalization")
+    print("\n Model shows moderate generalization")
 else:
     print("\n✗ Model shows limited generalization")
 

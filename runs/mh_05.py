@@ -39,12 +39,12 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
-    EUROC_DATASET_PATH = 'resources/mh_01'
-    N_TRAIN_IMAGES = 2900
+    scale, R, t = GroundTruthParams.load_transformation('resources/mh_05/project_files/colmap_to_gt_transform.json')
+    CAMERA_PARAMS_PATH = 'resources/mh_05/images/camera_rectified.yaml'
+    EUROC_DATASET_PATH = 'resources/mh_05'
+    N_TRAIN_IMAGES = 1600
 
-    test_dataset_path = 'resources/mh_01/images'
+    test_dataset_path = 'resources/mh_05/images'
 
     gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
         gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
@@ -64,10 +64,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_pruned40.bin'
+    vocabulary = 'resources/mh_05/vocabularies/vocab_tree_pruned40.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_01/map_databases/mh_01_pruned40.npz')
+    data = np.load('resources/mh_05/map_databases/mh_05_pruned40.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
@@ -93,11 +93,11 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     print("\n" + "="*60)
-    print("INT8 QUERIES vs FP32 MAP - EUROC mh_01")
+    print("INT8 QUERIES vs FP32 MAP - EUROC mh_05")
     print("="*60)
 
     # Load COLMAP reconstructed images
-    colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+    colmap_images = load_colmap_image_names('resources/mh_05/project_files/images.txt')
     colmap_set = set(colmap_images)
 
     # Get chronological order
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("LOCALIZATION ACCURACY")
     print("="*60)
-    print(f"Total test frames: {(len(test_image_list)-skipped_no_gt)}")
+    print(f"Total test frames: {len(test_image_list)-skipped_no_gt}")
     print(f"Successful localizations: {len(errors)}")
     print(f"Success rate: {len(errors)/(len(test_image_list)-skipped_no_gt)*100:.1f}%")
     print("="*60)
@@ -266,14 +266,14 @@ if __name__ == "__main__":
         print(f"  Total:              {total_time*1000:.2f} ms")
         print(f"  Average FPS:        {1.0/total_time:.2f}")
 
-        # np.savez('results/mh_01_fp32_errors.npz', 
+        # np.savez('results/mh_05_fp32_errors.npz', 
         #     errors=np.array(errors),
         #     match_counts=np.array(match_counts),
         #     timings_extract=np.array(timings['extract']),
         #     timings_match=np.array(timings['match']),
         #     timings_pnp=np.array(timings['pnp']),
         #     success_rate=len(errors)/len(test_image_list))
-        # print("✓ Saved errors to results/mh_01_fp32_errors.npz")
+        # print("✓ Saved errors to results/mh_05_fp32_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")
     

@@ -201,9 +201,9 @@ def main():
     print("=" * 60)
     
     # Paths (update these to your actual paths)
-    gt_path = 'resources/mh_03/data.csv'
-    colmap_path = 'resources/mh_03/project_files_og/images.txt'
-    output_dir = 'resources/mh_03/project_files_og'
+    gt_path = 'resources/mh_05/data.csv'
+    colmap_path = 'resources/mh_05/project_files/images.txt'
+    output_dir = 'resources/mh_05/project_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -219,7 +219,7 @@ def main():
     print(f"Found {len(matches)} matching frames")
     
     if len(matches) < 3:
-        print("\n❌ Error: Need at least 3 corresponding frames!")
+        print("\n Error: Need at least 3 corresponding frames!")
         return
     
     # Show time matching quality
@@ -235,7 +235,7 @@ def main():
     print("TRANSFORMATION PARAMETERS")
     print(f"{'=' * 60}")
     print(f"\nScale factor: {scale:.6f}")
-    print(f"  → 1 COLMAP unit = {scale:.4f} meters")
+    print(f"  â†’ 1 COLMAP unit = {scale:.4f} meters")
     
     print(f"\nRotation matrix:")
     print(R)
@@ -280,7 +280,7 @@ def main():
     with open(output_path, 'w') as f:
         json.dump(transform_data, f, indent=2)
     
-    print(f"\n✓ Saved transformation to {output_path}")
+    print(f"\nSaved transformation to {output_path}")
     
     # Save detailed results
     results_path = Path(output_dir) / 'alignment_results.txt'
@@ -298,7 +298,7 @@ def main():
         for (img_name, gt_ts, time_diff), error in zip(matches, errors):
             f.write(f"{img_name} {gt_ts:.6f} {time_diff*1000:.2f} {error:.4f}\n")
     
-    print(f"✓ Saved detailed results to {results_path}")
+    print(f"Saved detailed results to {results_path}")
     
     print(f"\n{'=' * 60}")
     print("SUMMARY")

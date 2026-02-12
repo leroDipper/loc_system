@@ -266,7 +266,7 @@ def extract_and_populate_database(dataset_path, db_path, camera_params, model_pa
 
 if __name__ == "__main__":
     # Configuration
-    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images_small'
+    dataset_path = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/images'
     output_dir = '/home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01'
 
     # Create output directory
