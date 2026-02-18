@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
 
     # Load existing vocabulary
-    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree.bin'
+    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
     # Load colmap map

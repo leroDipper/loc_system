@@ -64,10 +64,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/mh_03/vocabularies/vocab_tree_pruned40.bin'
+    vocabulary = 'resources/mh_03/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_03/map_databases/mh_03_pruned40.npz')
+    data = np.load('resources/mh_03/map_databases/mh_03_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")

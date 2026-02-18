@@ -201,9 +201,9 @@ def main():
     print("=" * 60)
     
     # Paths (update these to your actual paths)
-    gt_path = 'resources/mh_05/data.csv'
-    colmap_path = 'resources/mh_05/project_files/images.txt'
-    output_dir = 'resources/mh_05/project_files'
+    gt_path = 'resources/mh_03/data.csv'
+    colmap_path = 'resources/mh_03/project_files/images.txt'
+    output_dir = 'resources/mh_03/project_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
