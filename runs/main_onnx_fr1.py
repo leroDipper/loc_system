@@ -29,10 +29,25 @@ def load_camera_params(yaml_path):
         'cy': params['intrinsics'][3]
     }
 
+def load_colmap_image_names(images_txt_path):
+    """Load image names from COLMAP images.txt in order."""
+    colmap_images = []
+    with open(images_txt_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.strip().split()
+            if len(parts) == 10:
+                colmap_images.append(parts[9])
+    return colmap_images
+
 if __name__ == "__main__":
     scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr1/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/tum_fr1/camera_params.yaml'
     TUM_DATASET_PATH = 'resources/tum_fr1'
+
+    N_TRAIN_IMAGES = 500
+    test_dataset_path = 'resources/tum_fr1/images'
 
     gt_poses = GroundTruthParams.load_tum_ground_truth(
         gt_file_path=os.path.join(TUM_DATASET_PATH, 'groundtruth.txt'),
@@ -47,17 +62,21 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading INT8 ONNX model")
 
-    test_dataset_path = 'resources/tum_fr1/images'
-
-    # Load existing vocabulary (built with FP32)
-    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree_l2_pruned.bin'
+    
+    # Load existing vocabulary
+    vocabulary = 'resources/tum_fr1/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    # Load existing FP32 map
-    data = np.load('resources/tum_fr1/map_databases/tumfr1_map_train_l2.npz')
+    # Load colmap map
+    data = np.load('resources/tum_fr1/map_databases/tum_fr1_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
+    print(f"Loaded map: {len(map_3d_points)} points")
+
+
+
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
+    
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -81,24 +100,36 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     # ===================================================================
-    # CONTINUOUS LOCALIZATION TEST - INT8 queries vs FP32 map
+    # CONTINUOUS LOCALISATION TEST - INT8 queries vs FP32 map
     # ===================================================================
     print("\n" + "="*60)
-    print("INT8 QUERIES vs FP32 MAP - TUM FR1")
+    print("INT8 QUERIES vs FP32 MAP - TUM FR3")
     print("="*60)
     
-    # Get all test frames (skip first 500 used for map building)
+    # Load COLMAP reconstructed images
+    colmap_images = load_colmap_image_names('resources/tum_fr1/project_files/images.txt')
+    colmap_set = set(colmap_images)
+
+    # Get chronological order
     all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
-    test_frames = all_frames[500:]  # Use images after first 500
-    
-    print(f"Map built with first 500 images (FP32)")
-    print(f"Testing with {len(test_frames)} remaining images (INT8)\n")
+    all_filenames = [os.path.basename(f) for f in all_frames]
+
+    # Filter to only reconstructed images
+    reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+    # Take remaining after first N_TRAIN_IMAGES
+    test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+        
+    print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
+    print(f"COLMAP reconstructed {len(colmap_set)} total images")  # NEW LINE
+    print(f"Testing with {len(test_images)} held-out images (INT8)\n")
     
     errors = []
     match_counts = []
     timings = {'extract': [], 'match': [], 'pnp': []}
 
-     # DEBUG COUNTERS
+
+    # DEBUG COUNTERS
     skipped_no_gt = 0
     skipped_no_image = 0
     skipped_too_few_matches = 0
@@ -107,17 +138,20 @@ if __name__ == "__main__":
     rejected_reproj_error = 0
 
     
-    for i, frame_path in enumerate(test_frames):
+    for i, frame_path in enumerate(test_images):
         frame_name = os.path.basename(frame_path)
         
         # Skip if no ground truth available
         if frame_name not in gt_poses:
+            skipped_no_gt += 1
             continue
         
         # Read and process frame
         frame = cv2.imread(frame_path)
         if frame is None:
+            skipped_no_image += 1
             continue
+
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Preprocess for ONNX
@@ -133,9 +167,10 @@ if __name__ == "__main__":
         # Process outputs to get sparse features (top 100)
         B, C, H, W = feats.shape
         
+       
         # Get heatmap scores and select top-k
         heat_flat = heatmap[0, 0].flatten()
-        top_k = 100
+        top_k = 250
         
         if len(heat_flat) > top_k:
             top_indices = np.argpartition(heat_flat, -top_k)[-top_k:]
@@ -162,7 +197,7 @@ if __name__ == "__main__":
         
         # Match INT8 descriptors against FP32 map
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
+        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.85)
         t_match = time.time() - t_start
         
         # Filter unique
@@ -179,6 +214,7 @@ if __name__ == "__main__":
             matched_2d.append(keypoints[q_idx])
         
         if len(matched_3d) < 4:  # Need at least 4 points for PnP
+            skipped_too_few_matches += 1
             continue
             
         matched_3d = np.array(matched_3d, dtype=np.float32)
@@ -191,8 +227,8 @@ if __name__ == "__main__":
             matched_2d,
             K_cv,
             dist_coeffs,
-            reprojectionError=8.0,
-            confidence=0.99
+            reprojectionError=12.0,
+            confidence=0.95
         )
         t_pnp = time.time() - t_start
         
@@ -200,50 +236,73 @@ if __name__ == "__main__":
         timings['extract'].append(t_extract)
         timings['match'].append(t_match)
         timings['pnp'].append(t_pnp)
+
+        if not success:
+            pnp_failed += 1
+            continue
         
         if success and len(inliers) >= 6:
             # Check reprojection error of inliers
             inlier_points_3d = matched_3d[inliers.flatten()]
             inlier_points_2d = matched_2d[inliers.flatten()]
             
-            projected, _ = cv2.projectPoints(inlier_points_3d, rvec, tvec, K_cv, dist_coeffs)
+            projected, _ = cv2.projectPoints(
+                inlier_points_3d,
+                rvec,
+                tvec,
+                K_cv,
+                dist_coeffs
+            )
             reproj_errors = np.linalg.norm(inlier_points_2d - projected.squeeze(), axis=1)
             median_reproj_error = np.median(reproj_errors)
-            
+
+
             # Reject if median reprojection error too high
             if median_reproj_error > 5.0:
                 rejected_reproj_error += 1
                 continue
-            
+
+
+
+
+
             R_cam, _ = cv2.Rodrigues(rvec)
             C_colmap = -R_cam.T @ tvec.flatten()
             C_meters = GroundTruthParams.colmap_to_meters(C_colmap, scale, R, t)
-            
-            # Accept localization
+
             C_gt = gt_poses[frame_name]
             error_meters = np.linalg.norm(C_meters - C_gt)
             
             errors.append(error_meters)
             match_counts.append(len(inliers))
-            previous_C = C_meters
             
-            if (i + 1) % 20 == 0:
-                print(f"Frame {i+1}/{len(test_frames)}: "
+            if (i + 1) % 50 == 0:
+                print(f"Frame {i+1}/{len(test_images)}: "
                       f"Error={error_meters:.3f}m, "
                       f"Matches={len(inliers)}/{len(matched_3d)}")
                 MemoryMonitor.print_memory(f"After {i+1} frames")
         else:
             rejected_low_inliers += 1
-
-    print(f"Total test frames available: {len(test_frames)}")
-    print(f"Frames with GT: {sum(1 for f in test_frames if os.path.basename(f) in gt_poses)}")
     
     print("\n" + "="*60)
     print("INT8 vs FP32 MAP RESULTS")
     print("="*60)
-    print(f"Total frames attempted: {len(test_frames)}")
+    print(f"Total frames attempted: {(len(test_images)-skipped_no_gt)}")
     print(f"Successful localizations: {len(errors)}")
-    print(f"Success rate: {len(errors)/len(test_frames)*100:.1f}%")
+    print(f"Success rate: {len(errors)/(len(test_images)-skipped_no_gt)*100:.1f}%")
+
+    print(f"\n{'='*60}")
+    print("FAILURE BREAKDOWN")
+    print(f"{'='*60}")
+    print(f"Skipped - no ground truth:      {skipped_no_gt}")
+    print(f"Skipped - image failed to load: {skipped_no_image}")
+    print(f"Skipped - too few matches (<4): {skipped_too_few_matches}")
+    print(f"PnP RANSAC failed:              {pnp_failed}")
+    print(f"Rejected - low inliers (<6):    {rejected_low_inliers}")
+    print(f"Rejected - high reproj. error:  {rejected_reproj_error}")
+    total_failures = skipped_no_gt + skipped_no_image + skipped_too_few_matches + pnp_failed + rejected_low_inliers + rejected_reproj_error
+    print(f"Total failures:                 {total_failures}")
+    print(f"Sanity check (should = {len(test_images)}): {len(errors) + total_failures}")
     
     if len(errors) > 0:
         print(f"\nLocalization Accuracy:")
@@ -266,14 +325,14 @@ if __name__ == "__main__":
         print(f"  Total:              {total_time*1000:.2f} ms")
         print(f"  Average FPS:        {1.0/total_time:.2f}")
 
-        np.savez('results/fr1_int8_errors.npz',
-             errors=np.array(errors),
-             match_counts=np.array(match_counts),
-             timings_extract=np.array(timings['extract']),
-             timings_match=np.array(timings['match']),
-             timings_pnp=np.array(timings['pnp']),
-             success_rate=len(errors)/len(test_frames))
-        print("✓ Saved errors to results/fr1_int8_errors.npz")
+        # np.savez('results/fr3_int8_errors.npz',
+        #      errors=np.array(errors),
+        #      match_counts=np.array(match_counts),
+        #      timings_extract=np.array(timings['extract']),
+        #      timings_match=np.array(timings['match']),
+        #      timings_pnp=np.array(timings['pnp']),
+        #      success_rate=len(errors)/len(test_frames))
+        # print("✓ Saved errors to results/fr3_int8_errors.npz")
     
     MemoryMonitor.print_memory("After continuous localization")
     
