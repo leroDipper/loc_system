@@ -7,6 +7,37 @@ import glob
 from scipy.spatial.transform import Rotation
 from accelerated_modules import vocab_tree_match
 from loc_modules.onnx_feat import onnx_extractor
+from loc_modules.load_gt_params import GroundTruthParams
+import yaml
+import os
+
+
+def load_camera_params(yaml_path):
+    """Load camera parameters from YAML file."""
+    with open(yaml_path, 'r') as f:
+        params = yaml.safe_load(f)
+    
+    return {
+        'width': params['resolution'][0],
+        'height': params['resolution'][1],
+        'fx': params['intrinsics'][0],
+        'fy': params['intrinsics'][1],
+        'cx': params['intrinsics'][2],
+        'cy': params['intrinsics'][3]
+    }
+
+
+def load_colmap_image_names(images_txt_path):
+    """Load image names from COLMAP images.txt in order."""
+    colmap_images = []
+    with open(images_txt_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.strip().split()
+            if len(parts) == 10:
+                colmap_images.append(parts[9])
+    return colmap_images
 
 # ========== SETUP ==========
 print("Loading models...")
@@ -21,11 +52,20 @@ xfeat_fp32.eval()
 session_int8 = ort.InferenceSession('models/xfeat_752x480_int8.onnx', 
                                     providers=['CPUExecutionProvider'])
 
+
+
+scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
 # Load map
 data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
 map_descriptors = data['descriptors']
 map_3d_points = data['xyz_world']
 print(f"Loaded map: {len(map_descriptors)} descriptors")
+
+N_TRAIN_IMAGES = 2900
+
+test_dataset_path = 'resources/mh_01/images'
+
+CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
 
 # Build vocab tree matcher
 print("Building vocab tree matcher...")
@@ -34,15 +74,44 @@ matcher = vocab_tree_match.VocabTreeMatcher(
     map_descriptors
 )
 
+
 # Camera params
 K = np.array([[355.64, 0, 362.27],
               [0, 417.16, 249.66],
               [0, 0, 1]], dtype=np.float32)
 dist_coeffs = np.zeros(5, dtype=np.float32)
 
-# Load test images
-test_images = sorted(glob.glob('resources/mh_01/images/*.png'))[2900:4000]  # 300 test
-print(f"Testing on {len(test_images)} images\n")
+
+camera_params = load_camera_params(CAMERA_PARAMS_PATH)
+print(f"Loaded camera: {camera_params['width']}x{camera_params['height']}")
+print(f"  fx={camera_params['fx']:.2f}, fy={camera_params['fy']:.2f}")
+print(f"  cx={camera_params['cx']:.2f}, cy={camera_params['cy']:.2f}")
+
+K = np.array([[camera_params['fx'], 0, camera_params['cx']],
+                [0, camera_params['fy'], camera_params['cy']],
+                [0, 0, 1]], dtype=np.float32)
+dist_coeffs = np.zeros(5, dtype=np.float32)
+
+
+
+
+
+ # Load COLMAP reconstructed images
+colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+colmap_set = set(colmap_images)
+
+# Get chronological order
+all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
+all_filenames = [os.path.basename(f) for f in all_frames]
+
+# Filter to only reconstructed images
+reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+# Take remaining after first N_TRAIN_IMAGES
+test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+
+test_image_list = sorted(list(test_images))
+
 
 # ========== THE EXPERIMENT ==========
 print("=" * 70)
@@ -51,7 +120,7 @@ print("=" * 70)
 
 results = []
 
-for idx, img_path in enumerate(test_images):
+for idx, img_path in enumerate(test_image_list):
     frame = cv2.imread(img_path)
     if frame is None:
         continue

@@ -197,7 +197,7 @@ if __name__ == "__main__":
         
         # Match INT8 descriptors against FP32 map
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.85)
+        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
         t_match = time.time() - t_start
         
         # Filter unique
