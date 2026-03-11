@@ -1,5 +1,5 @@
 """
-Hierarchical Bayesian Model for Localization Error Prediction
+Hierarchical Bayesian Model for Localisation Error Prediction
 EUROC ONLY WITH PROPER TRAIN/TEST SPLIT
 
 Splits MH_01 into train/test, trains on MH_01_train + MH_03 + MH_05, tests on MH_01_test.
@@ -16,14 +16,14 @@ import os
 from sklearn.model_selection import train_test_split
 
 print("="*60)
-print("BAYESIAN ERROR PREDICTION - WITH TRAIN/TEST SPLIT")
+print("BAYESIAN ERROR PREDICTION")
 print("="*60)
 
-# ============================================================================
-# LOAD DATA
-# ============================================================================
 
-print("\nLoading EuRoC datasets (MH_01 + MH_03 + MH_05)...")
+# LOAD DATA
+
+
+print("\nLoading EuRoC datasets ...")
 
 df_mh_01_1 = pd.read_csv("results/mh_01_uncertainty250.csv")
 df_mh_01_2 = pd.read_csv("results/mh_01_uncertainty350.csv")
@@ -37,9 +37,8 @@ df_mh_05_1 = pd.read_csv("results/mh_05_uncertainty250.csv")
 df_mh_05_2 = pd.read_csv("results/mh_05_uncertainty350.csv")
 df_mh_05_3 = pd.read_csv("results/mh_05_uncertainty550.csv")
 
-# ============================================================================
+
 # SPLIT MH_01 INTO TRAIN/TEST (75/25 split by unique frames)
-# ============================================================================
 
 print("\nSplitting MH_01 into train/test sets...")
 
@@ -101,9 +100,9 @@ os.makedirs('results', exist_ok=True)
 pd.DataFrame({'frame': test_frames}).to_csv('results/mh_01_test_frames.csv', index=False)
 print("\n Saved test frame list to results/mh_01_test_frames.csv")
 
-# ============================================================================
+
 # COMBINE TRAINING DATA
-# ============================================================================
+
 
 df_mh_01_train['dataset'] = 0
 df_mh_03_train['dataset'] = 1
@@ -112,33 +111,42 @@ df_mh_05_train['dataset'] = 2
 df_train = pd.concat([df_mh_01_train, df_mh_03_train, df_mh_05_train], ignore_index=True)
 print(f"\nTotal training: {len(df_train)} frames (mean: {df_train['error_m'].mean()*100:.2f} cm)")
 
-# ============================================================================
+
+# LOG TRANSFORMS
+
+
+for df in [df_train, df_mh_01_test, df_mh_03_test, df_mh_05_test]:
+    df['log_mean_inlier_track_length'] = np.log1p(df['mean_inlier_track_length'])
+    df['log_mean_inverse_depth'] = np.log1p(df['mean_inverse_depth'])
+    df['log_median_inlier_reproj_error'] = np.log1p(df['median_inlier_reproj_error'])
+    df['log_img_blur_score'] = np.log1p(df['img_blur_score'])
+
+
 # SELECT FEATURES
-# ============================================================================
 
 features = [
-    "mean_inlier_track_length",   # rank 1
-    "condition_estimate",          # rank 2
-    "match_std_x",                 # rank 3
-    "depth_mean",                  # rank 4
-    "depth_std",                   # rank 5
-    "img_contrast",                # rank 6
-    "depth_range",                 # rank 7
-    "img_brightness",              # rank 9
-    "match_spread_normalized",     # rank 10
-    "mean_inverse_depth",          # rank 11
-    "median_inlier_reproj_error",  # rank 13 — new, positive correlation with error
-    "img_blur_score",              # rank 14
-    "mean_inlier_ba_error",        # rank 19
+    "log_mean_inlier_track_length",
+    "condition_estimate",
+    "match_std_x",
+    "depth_mean",
+    "depth_std",
+    "img_contrast",
+    "depth_range",
+    "img_brightness",
+    "match_spread_normalized",
+    "log_mean_inverse_depth",
+    "log_median_inlier_reproj_error",
+    "log_img_blur_score",
+    "mean_inlier_ba_error",
 ]
 
 print(f"\nUsing {len(features)} features:")
 for f in features:
     print(f"  - {f}")
 
-# ============================================================================
+
 # OUTLIER FILTERING
-# ============================================================================
+
 
 X = df_train[features].values
 y = df_train["error_m"].values
@@ -160,9 +168,9 @@ dataset_idx = dataset_idx[outlier_mask]
 print(f"  After: {len(y)} frames, mean={y.mean()*100:.2f}cm, max={y.max()*100:.2f}cm")
 print(f"  Removed: {np.sum(~outlier_mask)} extreme outliers")
 
-# ============================================================================
+
 # STANDARDISE FEATURES
-# ============================================================================
+
 
 from sklearn.preprocessing import StandardScaler
 
@@ -173,26 +181,17 @@ X_scaled = scaler.fit_transform(X)
 for i in range(X_scaled.shape[1]):
     X_scaled[:, i] = np.clip(X_scaled[:, i], -5, 5)
 
-# # Standardize y
-# y_mean = y.mean()
-# y_std = y.std()
-# y_scaled = (y - y_mean) / y_std
+
 
 from scipy.stats import iqr
 y_mean = np.median(y)
-y_std = iqr(y) / 1.349  # Normalize IQR to be comparable to std
+y_std = iqr(y) / 1.349  
 y_scaled = (y - y_mean) / y_std
 
 
 
-print(f"\nData preparation:")
-print(f"  X shape: {X_scaled.shape}")
-print(f"  y_median: {y_mean*100:.2f} cm")
-print(f"  y_robust_std: {y_std*100:.2f} cm")
-
-# ============================================================================
 # BUILD BAYESIAN MODEL
-# ============================================================================
+
 
 print("\n" + "="*60)
 print("BUILDING BAYESIAN MODEL")
@@ -202,159 +201,176 @@ n_features = X_scaled.shape[1]
 n_datasets = len(np.unique(dataset_idx))
 
 with pm.Model() as hierarchical_model:
+    mode_num = 3
 
-    # ======MIXTURE WEIGHTS============
-    beta_mixture = pm.Normal('beta_mixture', mu=0, sigma=1, shape=n_features)
+    # MIXTURE WEIGHTS
+    beta_mixture = pm.Normal('beta_mixture', mu=0, sigma=1, shape=(n_features, mode_num))
 
-    # Dataset-specific baseline failure probability
-    alpha_mixture_global = pm.Normal('alpha_mixture_global', mu=-2, sigma=1)
+    # Dataset-specific baseline per component
+    alpha_mixture_global = pm.Normal('alpha_mixture_global', mu=0, sigma=1, shape=mode_num)
     sigma_alpha_mixture = pm.HalfNormal('sigma_alpha_mixture', sigma=0.5)
-    alpha_mixture_offset = pm.Normal('alpha_mixture_offset', mu=0, sigma=1, shape=n_datasets)
+    alpha_mixture_offset = pm.Normal('alpha_mixture_offset', mu=0, sigma=1, shape=(n_datasets, mode_num))
     alpha_mixture = pm.Deterministic('alpha_mixture', alpha_mixture_global + alpha_mixture_offset * sigma_alpha_mixture)
 
-    # Probability of failure for each frame
-    logit_p = alpha_mixture[dataset_idx] + pm.math.dot(X_scaled, beta_mixture)
-    p_failure = pm.Deterministic('p_failure', pm.math.sigmoid(logit_p))
+    # Softmax mixture weights
+    logits = alpha_mixture[dataset_idx] + pm.math.dot(X_scaled, beta_mixture)
+    w = pm.Deterministic('w', pm.math.softmax(logits, axis=1))
+
+    # MODE 1 (low error)
+        # Global feature weights — shared across datasets
+    beta_1 = pm.Normal('beta_1', mu=0, sigma=1, shape=n_features)
+
+        # Dataset-specific intercepts
+    alpha_1_global = pm.Normal('alpha_1_global', mu=-1, sigma=0.5)
+    sigma_1_alpha = pm.HalfNormal('sigma_1_alpha', sigma=0.5)
+    alpha_1_offset = pm.Normal('alpha_1_offset', mu=0, sigma=1, shape=n_datasets)
+    alpha_1 = pm.Deterministic('alpha_1', alpha_1_global + alpha_1_offset * sigma_1_alpha)
+
+        # Mode prediction
+    mu_1 = alpha_1[dataset_idx] + pm.math.dot(X_scaled, beta_1)
+    sigma_1 = pm.HalfNormal('sigma_1', sigma=0.5)
+
+    # MODE 2 (moderate error)
+        # Global feature weights — shared across datasets
+    beta_2 = pm.Normal('beta_2', mu=0, sigma=1, shape=n_features)
+
+        # Ordering constraint — alpha_2 must be above alpha_1
+    alpha_gap_21 = pm.HalfNormal('alpha_gap_21', sigma=1.0)
+    alpha_2_global = pm.Deterministic('alpha_2_global', alpha_1_global + alpha_gap_21)
+
+        # Dataset-specific intercepts
+    sigma_2_alpha = pm.HalfNormal('sigma_2_alpha', sigma=0.5)
+    alpha_2_offset = pm.Normal('alpha_2_offset', mu=0, sigma=1, shape=n_datasets)
+    alpha_2 = pm.Deterministic('alpha_2', alpha_2_global + alpha_2_offset * sigma_2_alpha)
+
+        # Mode prediction
+    mu_2 = alpha_2[dataset_idx] + pm.math.dot(X_scaled, beta_2)
+    sigma_2 = pm.HalfNormal('sigma_2', sigma=0.5)
+
+    # MODE 3 (failure)
+        # Global feature weights — shared across datasets
+    beta_3 = pm.Normal('beta_3', mu=0, sigma=1, shape=n_features)
+
+        # Ordering constraint — alpha_3 must be above alpha_2
+    alpha_gap_32 = pm.HalfNormal('alpha_gap_32', sigma=1.0)
+    alpha_3_global = pm.Deterministic('alpha_3_global', alpha_2_global + alpha_gap_32)
+
+        # Dataset-specific intercepts
+    sigma_3_alpha = pm.HalfNormal('sigma_3_alpha', sigma=0.5)
+    alpha_3_offset = pm.Normal('alpha_3_offset', mu=0, sigma=1, shape=n_datasets)
+    alpha_3 = pm.Deterministic('alpha_3', alpha_3_global + alpha_3_offset * sigma_3_alpha)
+
+        # Mode prediction
+    mu_3 = alpha_3[dataset_idx] + pm.math.dot(X_scaled, beta_3)
+    sigma_3 = pm.HalfNormal('sigma_3', sigma=1.0)
 
 
-    # =======NORMAL MODEL============
-    # Global parameters
-    mu_global = pm.Normal('mu_global', mu=0, sigma=1, shape=n_features)
-    sigma_global = pm.HalfNormal('sigma_global', sigma=0.5, shape=n_features)
-    
-    # Dataset-specific effects 
-    beta_offset = pm.Normal('beta_offset', mu=0, sigma=1, shape=(n_datasets, n_features))
-    beta = pm.Deterministic('beta', mu_global + beta_offset * sigma_global)
-    
-    # Intercepts
-    alpha_global = pm.Normal('alpha_global', mu=0, sigma=1)
-    sigma_alpha = pm.HalfNormal('sigma_alpha', sigma=0.5)
-    alpha_offset = pm.Normal('alpha_offset', mu=0, sigma=1, shape=n_datasets)
-    alpha = pm.Deterministic('alpha', alpha_global + alpha_offset * sigma_alpha)
-    
-    # Normal mode prediction
-    mu_normal = alpha[dataset_idx] + pm.math.sum(beta[dataset_idx] * X_scaled, axis=1)
-    sigma_normal = pm.HalfNormal('sigma_normal', sigma=0.5)
+    # MIXTURE
+    mu_stacked = pm.math.stack([mu_1, mu_2, mu_3], axis=1)
+    y_obs = pm.NormalMixture('y_obs', w=w, mu=mu_stacked, sigma=[sigma_1, sigma_2, sigma_3], observed=y_scaled)
 
 
-    # =======FAILURE MODEL============
-    # Global feature weights for failure mode
-    beta_failure_global = pm.Normal('beta_failure_global', mu=0, sigma=1, shape=n_features)
-    sigma_failure_global = pm.HalfNormal('sigma_failure_global', sigma=0.5, shape=n_features)
 
-    # Dataset-specific failure feature weights
-    beta_failure_offset = pm.Normal('beta_failure_offset', mu=0, sigma=1, shape=(n_datasets, n_features))
-    beta_failure = pm.Deterministic('beta_failure', beta_failure_global + beta_failure_offset * sigma_failure_global)
-
-    # Dataset-specific intercepts (each dataset has different baseline failure error)
-    alpha_failure_global = pm.Normal('alpha_failure_global', mu=2.0, sigma=0.5)
-    alpha_failure_offset = pm.Normal('alpha_failure_offset', mu=0, sigma=0.3, shape=n_datasets)
-    alpha_failure = pm.Deterministic('alpha_failure', alpha_failure_global + alpha_failure_offset * 0.5)
-
-    # Failure mode prediction
-    mu_failure = alpha_failure[dataset_idx] + pm.math.sum(beta_failure[dataset_idx] * X_scaled, axis=1)
-    sigma_failure = pm.HalfNormal('sigma_failure', sigma=1.0)
-    
-
-    # =======MIXTURE===========
-    mixture_weights = pm.math.stack([1 - p_failure, p_failure], axis=1)
-    # Stack mu parameters: shape (n_observations, n_components)
-    mu_stacked = pm.math.stack([mu_normal, mu_failure], axis=1)
-    y_obs = pm.NormalMixture('y_obs', w=mixture_weights, mu=mu_stacked, sigma=[sigma_normal, sigma_failure], observed=y_scaled)
-
-# ============================================================================
 # INFERENCE
-# ============================================================================
-
 print("\n" + "="*60)
-print("RUNNING INFERENCE")
+print("RUNNING INFERENCE (NUTS - single chain)")
 print("="*60)
 
 with hierarchical_model:
     trace = pm.sample(
         draws=2000,
-        tune=2000, 
-        chains=4,
+        tune=2000,
+        chains=1,
         return_inferencedata=True,
         random_seed=42,
-        target_accept=0.95
+        target_accept=0.95,
+        nuts_sampler_kwargs={"max_treedepth": 15}
     )
 
 print("Sampling complete")
 
-# ============================================================================
+
 # CONVERGENCE CHECK
-# ============================================================================
+
 
 print("\n" + "="*60)
 print("CONVERGENCE DIAGNOSTICS")
 print("="*60)
 
-summary = az.summary(trace, var_names=['mu_global', 'sigma_global', 'beta', 'sigma_normal', 'sigma_failure'])
-print(f"Max R-hat: {summary['r_hat'].max():.4f}")
+# Single chain — use ESS only (R-hat requires multiple chains)
+summary = az.summary(trace, var_names=['alpha_1', 'alpha_2', 'alpha_3', 'sigma_1', 'sigma_2', 'sigma_3'])
 print(f"Min ESS (bulk): {summary['ess_bulk'].min():.0f}")
 
-if summary['r_hat'].max() > 1.01:
-    print("WARNING: Convergence issues detected")
+if summary['ess_bulk'].min() < 200:
+    print("WARNING: Low ESS — consider more draws")
 else:
     print("Convergence looks good!")
 
-# ============================================================================
+
+
 # EXTRACT POSTERIORS
-# ============================================================================
-
-mu_global_post = trace.posterior['mu_global'].mean(dim=['chain', 'draw']).values
-sigma_global_post = trace.posterior['sigma_global'].mean(dim=['chain', 'draw']).values
-beta_post = trace.posterior['beta'].mean(dim=['chain', 'draw']).values
-alpha_post = trace.posterior['alpha'].mean(dim=['chain', 'draw']).values
 
 
+# Mixture weights
+beta_mixture_post = trace.posterior['beta_mixture'].mean(dim=['chain', 'draw']).values  # (n_features, 3)
+alpha_mixture_post = trace.posterior['alpha_mixture'].mean(dim=['chain', 'draw']).values  # (n_datasets, 3)
 
-beta_mixture_post = trace.posterior['beta_mixture'].mean(dim=['chain', 'draw']).values
-alpha_mixture_post = trace.posterior['alpha_mixture'].mean(dim=['chain', 'draw']).values  # shape (n_datasets,)
-beta_failure_post = trace.posterior['beta_failure'].mean(dim=['chain', 'draw']).values
-alpha_failure_post = trace.posterior['alpha_failure'].mean(dim=['chain', 'draw']).values
-sigma_normal_post = trace.posterior['sigma_normal'].mean(dim=['chain', 'draw']).values
-sigma_failure_post = trace.posterior['sigma_failure'].mean(dim=['chain', 'draw']).values
+# Mode 1 (low error)
+alpha_1_post = trace.posterior['alpha_1'].mean(dim=['chain', 'draw']).values  # (n_datasets,)
+beta_1_post = trace.posterior['beta_1'].mean(dim=['chain', 'draw']).values    # (n_features,)
+sigma_1_post = trace.posterior['sigma_1'].mean(dim=['chain', 'draw']).values  # scalar
 
-# ============================================================================
+# Mode 2 (moderate error)
+alpha_2_post = trace.posterior['alpha_2'].mean(dim=['chain', 'draw']).values
+beta_2_post = trace.posterior['beta_2'].mean(dim=['chain', 'draw']).values    # (n_features,)
+sigma_2_post = trace.posterior['sigma_2'].mean(dim=['chain', 'draw']).values
+
+# Mode 3 (failure)
+alpha_3_post = trace.posterior['alpha_3'].mean(dim=['chain', 'draw']).values
+beta_3_post = trace.posterior['beta_3'].mean(dim=['chain', 'draw']).values    # (n_features,)
+sigma_3_post = trace.posterior['sigma_3'].mean(dim=['chain', 'draw']).values
+
+
+
 # SAVE MODEL
-# ============================================================================
 
 model_data = {
     'features': features,
     'scaler': scaler,
     'y_mean': y_mean,
     'y_std': y_std,
-    
-    # Normal mode
-    'mu_global': mu_global_post,
-    'sigma_global': sigma_global_post,
-    'beta': beta_post,
-    'alpha': alpha_post,  
-    'sigma_normal': sigma_normal_post,
-    
-    # Failure mode
-    'beta_failure': beta_failure_post,
-    'alpha_failure': alpha_failure_post,
-    'sigma_failure': sigma_failure_post,
-    
+
     # Mixture weights
     'beta_mixture': beta_mixture_post,
     'alpha_mixture': alpha_mixture_post,
-    
+
+    # Mode 1
+    'alpha_1': alpha_1_post,
+    'beta_1': beta_1_post,
+    'sigma_1': sigma_1_post,
+
+    # Mode 2
+    'alpha_2': alpha_2_post,
+    'beta_2': beta_2_post,
+    'sigma_2': sigma_2_post,
+
+    # Mode 3
+    'alpha_3': alpha_3_post,
+    'beta_3': beta_3_post,
+    'sigma_3': sigma_3_post,
+
     'dataset_names': ['MH_01', 'MH_03', 'MH_05'],
     'train_frames': train_frames.tolist(),
     'test_frames': test_frames.tolist(),
-    'model_type': 'mixture'  
+    'model_type': 'mixture_3component'
 }
 
 trace.to_netcdf('results/bayesian_trace_euroc.nc')
 print("\n Saved trace to results/bayesian_trace_euroc.nc")
 
-# ============================================================================
+
 # EVALUATE ON TEST SET
-# ============================================================================
+
 
 print("\n" + "="*60)
 print("EVALUATING ON HELD-OUT TEST SET")
@@ -369,37 +385,43 @@ y_test = df_test_all["error_m"].values
 X_test_scaled = scaler.transform(X_test)
 X_test_scaled = np.clip(X_test_scaled, -5, 5)
 
-# Predict failure probability — use per-sequence alpha_mixture
-# Test set order: MH_01 (182), MH_03 (169), MH_05 (159)
+# Test dataset indices
 n_mh01_test = len(df_mh_01_test)
 n_mh03_test = len(df_mh_03_test)
 n_mh05_test = len(df_mh_05_test)
 test_dataset_idx = np.array([0]*n_mh01_test + [1]*n_mh03_test + [2]*n_mh05_test)
 
-logit_p_test = alpha_mixture_post[test_dataset_idx] + np.dot(X_test_scaled, beta_mixture_post)
-p_failure_test = 1 / (1 + np.exp(-logit_p_test))
+# Compute softmax mixture weights
+from scipy.special import softmax
+logits_test = alpha_mixture_post[test_dataset_idx] + np.dot(X_test_scaled, beta_mixture_post)  # (n_test, 3)
+w_test = softmax(logits_test, axis=1)  # (n_test, 3)
 
-# Predict normal mode error
-mu_normal_test = alpha_post[0] + np.dot(X_test_scaled, beta_post[0]) 
- 
-# Using MH_01 params (dataset 0)
-pred_normal = mu_normal_test * y_std + y_mean
+# Predict each mode error
+mu_1_test = alpha_1_post[test_dataset_idx] + np.dot(X_test_scaled, beta_1_post)
+mu_2_test = alpha_2_post[test_dataset_idx] + np.dot(X_test_scaled, beta_2_post)
+mu_3_test = alpha_3_post[test_dataset_idx] + np.dot(X_test_scaled, beta_3_post)
 
-# Predict failure mode error
-mu_failure_test = alpha_failure_post[test_dataset_idx] + np.sum(beta_failure_post[test_dataset_idx] * X_test_scaled, axis=1)
-pred_failure = mu_failure_test * y_std + y_mean
+# Denormalize
+pred_1 = mu_1_test * y_std + y_mean
+pred_2 = mu_2_test * y_std + y_mean
+pred_3 = mu_3_test * y_std + y_mean
 
-# Expected error (mixture)
-predictions = (1 - p_failure_test) * pred_normal + p_failure_test * pred_failure
+# Expected error (weighted mixture)
+predictions = w_test[:, 0] * pred_1 + w_test[:, 1] * pred_2 + w_test[:, 2] * pred_3
 
-# Uncertainty (mixture of variances)
-var_normal = sigma_normal_post**2 * (y_std**2)
-var_failure = sigma_failure_post**2 * (y_std**2)
+# Uncertainty (law of total variance)
+var_1 = sigma_1_post**2 * y_std**2
+var_2 = sigma_2_post**2 * y_std**2
+var_3 = sigma_3_post**2 * y_std**2
 uncertainties = np.sqrt(
-    (1 - p_failure_test) * (var_normal + pred_normal**2) + 
-    p_failure_test * (var_failure + pred_failure**2) - 
+    w_test[:, 0] * (var_1 + pred_1**2) +
+    w_test[:, 1] * (var_2 + pred_2**2) +
+    w_test[:, 2] * (var_3 + pred_3**2) -
     predictions**2
 )
+
+# p_failure = weight of component 3
+p_failure_test = w_test[:, 2]
 
 # Metrics
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -413,22 +435,19 @@ correlation = np.corrcoef(y_test, predictions)[0, 1]
 residuals = np.abs(y_test - predictions)
 within_1sigma = np.sum(residuals < uncertainties) / len(residuals)
 
+# Dominant mode per frame
+dominant_mode = np.argmax(w_test, axis=1)  # 0, 1, or 2
 
 print(f"\nMixture Model Analysis:")
 print(f"  Mean P(failure): {p_failure_test.mean():.3f}")
 print(f"  Frames with P(failure) > 0.5: {np.sum(p_failure_test > 0.5)}/{len(p_failure_test)}")
 
-# Stratify by predicted mode
-normal_mask = p_failure_test < 0.5
-failure_mask = p_failure_test >= 0.5
-
-if np.sum(normal_mask) > 0:
-    print(f"\n  Predicted Normal Mode (n={np.sum(normal_mask)}):")
-    print(f"    Mean actual error: {y_test[normal_mask].mean()*100:.2f} cm")
-    
-if np.sum(failure_mask) > 0:
-    print(f"\n  Predicted Failure Mode (n={np.sum(failure_mask)}):")
-    print(f"    Mean actual error: {y_test[failure_mask].mean()*100:.2f} cm")
+for mode_idx, mode_name in enumerate(['Low-error', 'Moderate-error', 'Failure']):
+    mask = dominant_mode == mode_idx
+    if np.sum(mask) > 0:
+        print(f"\n  Predicted {mode_name} Mode (n={np.sum(mask)}):")
+        print(f"    Mean actual error: {y_test[mask].mean()*100:.2f} cm")
+        print(f"    Mean weight: {w_test[mask, mode_idx].mean():.3f}")
 
 print(f"\nTest Set Performance:")
 print(f"  Frames: {len(y_test)}")
@@ -438,7 +457,7 @@ print(f"  Mean predicted uncertainty: {uncertainties.mean()*100:.2f} cm")
 print(f"\nMetrics:")
 print(f"  RMSE: {rmse*100:.2f} cm")
 print(f"  MAE:  {mae*100:.2f} cm")
-print(f"  R²:   {r2:.3f}")
+print(f"  R^2:   {r2:.3f}")
 print(f"  Correlation: {correlation:.3f}")
 print(f"\nCalibration:")
 print(f"  Within sigma: {within_1sigma*100:.1f}% (expected ~68%)")
@@ -458,11 +477,10 @@ model_data['r2'] = float(r2)
 model_data['correlation'] = float(correlation)
 model_data['rmse'] = float(rmse)
 model_data['mae'] = float(mae)
-joblib.dump(model_data, 'results/bayesian_model_euroc_mixture.joblib')
+joblib.dump(model_data, 'results/bayesian_gmm.joblib')
 
-# ============================================================================
+
 # SUMMARY
-# ============================================================================
 
 print("\n" + "="*60)
 print("SUMMARY")

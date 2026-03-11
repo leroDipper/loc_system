@@ -49,37 +49,30 @@ xfeat_fp32 = xfeat_fp32.to(device)
 xfeat_fp32.eval()
 
 # INT8 model
-session_int8 = ort.InferenceSession('models/xfeat_752x480_int8.onnx', 
+session_int8 = ort.InferenceSession('models/xfeat_640x480_int8.onnx', 
                                     providers=['CPUExecutionProvider'])
 
 
 
-scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
+scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr3/project_files/colmap_to_gt_transform.json')
 # Load map
-data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
+data = np.load('resources/tum_fr3/map_databases/tum_fr3_master.npz')
 map_descriptors = data['descriptors']
 map_3d_points = data['xyz_world']
 print(f"Loaded map: {len(map_descriptors)} descriptors")
 
-N_TRAIN_IMAGES = 2900
+N_TRAIN_IMAGES = 2000
 
-test_dataset_path = 'resources/mh_01/images'
+test_dataset_path = 'resources/tum_fr3/images'
 
-CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
+CAMERA_PARAMS_PATH = 'resources/tum_fr3/images/camera_rectified.yaml'
 
 # Build vocab tree matcher
 print("Building vocab tree matcher...")
 matcher = vocab_tree_match.VocabTreeMatcher(
-    'resources/mh_01/vocabularies/vocab_tree_master.bin',
+    'resources/tum_fr3/vocabularies/vocab_tree_master.bin',
     map_descriptors
 )
-
-
-# Camera params
-K = np.array([[355.64, 0, 362.27],
-              [0, 417.16, 249.66],
-              [0, 0, 1]], dtype=np.float32)
-dist_coeffs = np.zeros(5, dtype=np.float32)
 
 
 camera_params = load_camera_params(CAMERA_PARAMS_PATH)
@@ -97,7 +90,7 @@ dist_coeffs = np.zeros(5, dtype=np.float32)
 
 
  # Load COLMAP reconstructed images
-colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+colmap_images = load_colmap_image_names('resources/tum_fr3/project_files/images.txt')
 colmap_set = set(colmap_images)
 
 # Get chronological order
@@ -143,9 +136,20 @@ for idx, img_path in enumerate(test_image_list):
     if len(map_idx_fp32) < 6:
         continue
     
+    query_to_map_fp32 = {}
+    for q_idx_fp32, m_idx_fp32, distance_fp32 in zip( query_idx_fp32, map_idx_fp32, dist_fp32):
+        if q_idx_fp32 not in query_to_map_fp32 or distance_fp32 < query_to_map_fp32[q_idx_fp32][1]:
+            query_to_map_fp32[q_idx_fp32] = (m_idx_fp32, distance_fp32)
+
+    matched_3d_fp32 = []
+    matched_2d_fp32 = []
+    for q_idx_fp32, (m_idx_fp32, distance_fp32) in query_to_map_fp32.items():
+            matched_3d_fp32.append(map_3d_points[m_idx_fp32])
+            matched_2d_fp32.append(kpts_fp32[q_idx_fp32])
+
     # PnP
-    matched_3d_fp32 = map_3d_points[map_idx_fp32]
-    matched_2d_fp32 = kpts_fp32[query_idx_fp32]
+    matched_3d_fp32 = np.array(matched_3d_fp32, dtype=np.float32)
+    matched_2d_fp32 = np.array(matched_2d_fp32, dtype=np.float32)
     
     success_fp32, rvec_fp32, tvec_fp32, inliers_fp32 = cv2.solvePnPRansac(
         matched_3d_fp32, matched_2d_fp32, K, dist_coeffs,
@@ -166,10 +170,21 @@ for idx, img_path in enumerate(test_image_list):
     
     if len(map_idx_int8) < 6:
         continue
+
+    query_to_map_int8 = {}
+    for q_idx_int8, m_idx_int8, distance_int8 in zip( query_idx_int8, map_idx_int8, dist_int8):
+        if q_idx_int8 not in query_to_map_int8 or distance_int8 < query_to_map_int8[q_idx_int8][1]:
+            query_to_map_int8[q_idx_int8] = (m_idx_int8, distance_int8)
+
+    matched_3d_int8 = []
+    matched_2d_int8 = []
+    for q_idx_int8, (m_idx_int8, distance_int8) in query_to_map_int8.items():
+            matched_3d_int8.append(map_3d_points[m_idx_int8])
+            matched_2d_int8.append(keypoints_int8[q_idx_int8])
     
     # PnP
-    matched_3d_int8 = map_3d_points[map_idx_int8]
-    matched_2d_int8 = keypoints_int8[query_idx_int8]
+    matched_3d_int8 = np.array(matched_3d_int8, dtype=np.float32)
+    matched_2d_int8 = np.array(matched_2d_int8, dtype=np.float32)
     
     success_int8, rvec_int8, tvec_int8, inliers_int8 = cv2.solvePnPRansac(
         matched_3d_int8, matched_2d_int8, K, dist_coeffs,
@@ -188,10 +203,15 @@ for idx, img_path in enumerate(test_image_list):
     divergence = 1 - overlap  # δC "magnitude"
     
     # 2. Pose change (δT magnitude)
+    R_cam_fp32, _ = cv2.Rodrigues(rvec_fp32)
+    R_cam_int8, _ = cv2.Rodrigues(rvec_int8)
     # Translation change
-    t_fp32 = tvec_fp32.flatten()
-    t_int8 = tvec_int8.flatten()
-    delta_translation = np.linalg.norm(t_fp32 - t_int8)
+    t_fp32_colmap = -R_cam_fp32.T @ tvec_fp32.flatten()
+    t_fp32_metres = GroundTruthParams.colmap_to_meters(t_fp32_colmap, scale, R, t)
+
+    t_int8_colmap = -R_cam_int8.T @ tvec_int8.flatten()
+    t_int8_metres = GroundTruthParams.colmap_to_meters(t_int8_colmap, scale, R, t)
+    delta_translation = np.linalg.norm(t_fp32_metres - t_int8_metres)
     
     # Rotation change (angle between rotations)
     R_fp32 = cv2.Rodrigues(rvec_fp32)[0]

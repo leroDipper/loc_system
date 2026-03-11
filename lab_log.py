@@ -163,15 +163,21 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
-    EUROC_DATASET_PATH = 'resources/mh_01'
-    N_TRAIN_IMAGES = 2900
-    test_dataset_path = 'resources/mh_01/images'
+    # Load transformation
+    scale, R, t = GroundTruthParams.load_transformation('resources/iphone/project_files/colmap_to_apriltag_transform.json')
+    CAMERA_PARAMS_PATH = 'resources/iphone/images/camera_rectified.yaml'
+    DATASET_PATH = 'resources/iphone'
+    COLMAP_DIR = os.path.join(DATASET_PATH, 'project_files')
+    N_TRAIN_IMAGES = 700  # Adjust based on your dataset
 
-    gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
-        gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
-        image_dir=os.path.join(EUROC_DATASET_PATH, 'images')
+    test_dataset_path = 'resources/iphone/images'
+
+    # Load ground truth
+    gt_poses = GroundTruthParams.load_iphone_ground_truth(
+        colmap_images_txt=os.path.join(COLMAP_DIR, 'images.txt'),
+        scale=scale,
+        R=R,
+        t=t
     )
 
     xfeat = None
@@ -187,10 +193,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_master.bin'
+    vocabulary = 'resources/iphone/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
+    data = np.load('resources/iphone/map_databases/iphone_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
 
@@ -230,15 +236,15 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALISATION TEST - mh_01 SEQUENCE")
+    print("CONTINUOUS LOCALISATION TEST - iphone SEQUENCE")
     print("="*60)
 
     # Load COLMAP reconstructed images
-    colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+    colmap_images = load_colmap_image_names('resources/iphone/project_files/images.txt')
     colmap_set = set(colmap_images)
 
     # Get chronological order
-    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.png")))
+    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.jpg")))
     all_filenames = [os.path.basename(f) for f in all_frames]
 
     # Filter to only reconstructed images
@@ -468,8 +474,8 @@ if __name__ == "__main__":
             import pandas as pd
             os.makedirs('results', exist_ok=True)
             uncertainty_df = pd.DataFrame(results_log)
-            uncertainty_df.to_csv('results/mh_01_uncertainty250.csv', index=False)
-            print(f"\n✓ Saved detailed data to results/mh_01_uncertainty250.csv")
+            uncertainty_df.to_csv('results/lab_uncertainty250.csv', index=False)
+            print(f"\n✓ Saved detailed data to results/lab_uncertainty250.csv")
             print(f"  Rows: {len(uncertainty_df)}, Columns: {len(uncertainty_df.columns)}")
 
     MemoryMonitor.print_memory("After continuous localisation")

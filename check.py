@@ -1,10 +1,11 @@
-import joblib
-model = joblib.load('results/bayesian_model.joblib')
+import pandas as pd
+import numpy as np
 
-# Check if model has intercepts (alpha)
-if 'alpha' in model:
-    print("Dataset intercepts (baseline predictions):")
-    for i, name in enumerate(model['dataset_names']):
-        # Unscale the intercept
-        alpha_unscaled = model['alpha'][i] * model['y_std'] + model['y_mean']
-        print(f"  {name}: {alpha_unscaled*100:.2f} cm")
+for name in ['mh_01', 'mh_03', 'mh_05', 'tum_fr1']:
+    df = pd.read_csv(f'results/{name}_uncertainty250.csv')
+    if 'translation_std_total_m' in df.columns:
+        corr = np.corrcoef(df['error_m'], df['translation_std_total_m'])[0,1]
+        print(f"{name}: correlation = {corr:.3f}")
+    else:
+        print(f"{name}: translation_std_total_m not in columns")
+        print(f"  columns: {list(df.columns)}")

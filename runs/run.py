@@ -74,12 +74,13 @@ def load_colmap_image_names(images_txt_path):
 
 if __name__ == "__main__":
     # Load transformation
-    scale, R, t = GroundTruthParams.load_transformation('resources/iphone/colmap_to_apriltag_transform.json')
+    scale, R, t = GroundTruthParams.load_transformation('resources/iphone/project_files_text/colmap_to_apriltag_transform.json')
     CAMERA_PARAMS_PATH = 'resources/iphone/images/camera_rectified.yaml'
     DATASET_PATH = 'resources/iphone'
-    IMAGE_DIR = os.path.join(DATASET_PATH, 'images')
-    COLMAP_DIR = os.path.join(DATASET_PATH, 'project_files')
-    N_TRAIN_IMAGES = 300  # Adjust based on your dataset
+    COLMAP_DIR = os.path.join(DATASET_PATH, 'project_files_text')
+    N_TRAIN_IMAGES = 700  # Adjust based on your dataset
+
+    test_dataset_path = 'resources/iphone/images'
 
     # Load ground truth
     gt_poses = GroundTruthParams.load_iphone_ground_truth(
@@ -102,28 +103,20 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    # Load COLMAP image order to determine train/test split
-    colmap_images = load_colmap_image_names(os.path.join(COLMAP_DIR, 'images.txt'))
-    train_images = set(colmap_images[:N_TRAIN_IMAGES])
-    test_images = set(colmap_images[N_TRAIN_IMAGES:])
-    
-    print(f"COLMAP processed {len(colmap_images)} images total")
-    print(f"Train set: {len(train_images)} images")
-    print(f"Test set: {len(test_images)} images")
 
     # Load existing vocabulary (built with FP32)
-    vocabulary = os.path.join(DATASET_PATH, 'vocabularies/vocab_tree_iphone.bin')
+    vocabulary = os.path.join(DATASET_PATH, 'vocabularies/vocab_tree_master.bin')
     print("Loaded existing vocabulary")
 
     # Load existing FP32 map (built from train images only)
-    data = np.load(os.path.join(DATASET_PATH, 'map_databases/iphone.npz'))
+    data = np.load(os.path.join(DATASET_PATH, 'map_databases/iphone_master.npz'))
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
     print(f"Loaded FP32 map: {len(map_3d_points)} points")
 
     MemoryMonitor.print_memory("After loading map")
 
-    #camera_params = load_camera_params_from_colmap(os.path.join(COLMAP_DIR, 'cameras.txt'))
+  
 
     camera_params = load_camera_params(CAMERA_PARAMS_PATH)
 
@@ -144,6 +137,24 @@ if __name__ == "__main__":
     print(f"Index built in {t_index:.3f}s")
 
     MemoryMonitor.print_memory("After building matcher")
+
+    # Load COLMAP reconstructed images
+    colmap_images = load_colmap_image_names('resources/iphone/project_files_text/images.txt')
+    colmap_set = set(colmap_images)
+
+    # Get chronological order
+    all_frames = sorted(glob.glob(os.path.join(test_dataset_path, "*.jpg")))
+    all_filenames = [os.path.basename(f) for f in all_frames]
+
+    # Filter to only reconstructed images
+    reconstructed_chrono = [f for f in all_filenames if f in colmap_set]
+
+    # Take remaining after first N_TRAIN_IMAGES
+    test_images = [os.path.join(test_dataset_path, f) for f in reconstructed_chrono[N_TRAIN_IMAGES:]]
+        
+    print(f"Map built with {N_TRAIN_IMAGES} images (FP32)")
+    print(f"COLMAP reconstructed {len(colmap_set)} total images")  # NEW LINE
+    print(f"Testing with {len(test_images)} held-out images (INT8)\n")
 
     # ===================================================================
     # CONTINUOUS LOCALISATION TEST
@@ -170,8 +181,8 @@ if __name__ == "__main__":
     # Test only on held-out test images
     test_image_list = sorted(list(test_images))
     
-    for i, frame_name in enumerate(test_image_list):
-        frame_path = os.path.join(IMAGE_DIR, frame_name)
+    for i, frame_path in enumerate(test_image_list):
+        frame_name = os.path.basename(frame_path)
         
         # Skip if no ground truth available
         if frame_name not in gt_poses:
@@ -188,7 +199,7 @@ if __name__ == "__main__":
         # Extract features
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]
@@ -240,7 +251,7 @@ if __name__ == "__main__":
         timings['match'].append(t_match)
         timings['pnp'].append(t_pnp)
         
-        if not success or len(inliers) < 6:
+        if not success or len(inliers) < 4:
             pnp_failed += 1
             rejected_low_inliers += 1
             continue

@@ -93,11 +93,11 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After building matcher")
     
-    # Initialize Bayesian Uncertainty Estimator
+    # Initialise Bayesian Uncertainty Estimator
     print("\nInitializing Bayesian uncertainty estimator...")
     try:
         uncertainty_estimator = BayesianPoseUncertaintyEstimator(
-            model_path="results/bayesian_model_euroc.joblib",
+            model_path="results/bayesian_model_euroc_mixture.joblib",
             use_dataset_specific=False,  # Use global priors for now
             dataset_name=None
         )
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=350)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     print(f"Sanity check (should = {len(test_image_list)}): {len(errors) + skipped_no_gt + skipped_no_image + skipped_too_few_matches + pnp_failed + rejected_low_inliers + rejected_reproj_error}")
     
     print("\n" + "="*60)
-    print("LOCALIZATION ACCURACY")
+    print("LOCALISATION ACCURACY")
     print("="*60)
     print(f"Total test frames: {(len(test_image_list)-skipped_no_gt)}")
     print(f"Successful localizations: {len(errors)}")
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     print("="*60)
     
     if len(errors) > 0:
-        print(f"\nLocalization Accuracy:")
+        print(f"\nLocalisation Accuracy:")
         print(f"  Mean error:   {np.mean(errors):.4f} m ({np.mean(errors)*100:.2f} cm)")
         print(f"  Median error: {np.median(errors):.4f} m ({np.median(errors)*100:.2f} cm)")
         print(f"  Std error:    {np.std(errors):.4f} m")

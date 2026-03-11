@@ -163,15 +163,16 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/mh_01/project_files/colmap_to_gt_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/mh_01/images/camera_rectified.yaml'
-    EUROC_DATASET_PATH = 'resources/mh_01'
-    N_TRAIN_IMAGES = 2900
-    test_dataset_path = 'resources/mh_01/images'
+    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr3/colmap_to_gt_transform.json')
+    CAMERA_PARAMS_PATH = 'resources/tum_fr3/camera_params.yaml'
+    TUM_DATASET_PATH = 'resources/tum_fr3'
 
-    gt_poses = GroundTruthParams.load_euroc_ground_truth_by_image(
-        gt_csv_path=os.path.join(EUROC_DATASET_PATH, 'data.csv'),
-        image_dir=os.path.join(EUROC_DATASET_PATH, 'images')
+    N_TRAIN_IMAGES = 2000 
+    test_dataset_path = 'resources/tum_fr3/images'
+
+    gt_poses = GroundTruthParams.load_tum_ground_truth(
+        gt_file_path=os.path.join(TUM_DATASET_PATH, 'groundtruth.txt'),
+        rgb_file_path=os.path.join(TUM_DATASET_PATH, 'rgb.txt')
     )
 
     xfeat = None
@@ -187,10 +188,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/mh_01/vocabularies/vocab_tree_master.bin'
+    vocabulary = 'resources/tum_fr3/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
+    data = np.load('resources/tum_fr3/map_databases/tum_fr3_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
 
@@ -230,11 +231,11 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALISATION TEST - mh_01 SEQUENCE")
+    print("CONTINUOUS LOCALISATION TEST - tum_fr3 SEQUENCE")
     print("="*60)
 
     # Load COLMAP reconstructed images
-    colmap_images = load_colmap_image_names('resources/mh_01/project_files/images.txt')
+    colmap_images = load_colmap_image_names('resources/tum_fr3/project_files/images.txt')
     colmap_set = set(colmap_images)
 
     # Get chronological order
@@ -281,7 +282,7 @@ if __name__ == "__main__":
 
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=250)
+            output = xfeat.detectAndCompute(frame_gray, top_k=550)
         t_extract = time.time() - t_start
 
         features = output[0]
@@ -468,8 +469,8 @@ if __name__ == "__main__":
             import pandas as pd
             os.makedirs('results', exist_ok=True)
             uncertainty_df = pd.DataFrame(results_log)
-            uncertainty_df.to_csv('results/mh_01_uncertainty250.csv', index=False)
-            print(f"\n✓ Saved detailed data to results/mh_01_uncertainty250.csv")
+            uncertainty_df.to_csv('results/tum_fr3_uncertainty550.csv', index=False)
+            print(f"\n✓ Saved detailed data to results/tum_fr3_uncertainty550.csv")
             print(f"  Rows: {len(uncertainty_df)}, Columns: {len(uncertainty_df.columns)}")
 
     MemoryMonitor.print_memory("After continuous localisation")

@@ -44,12 +44,12 @@ class BayesianPoseUncertaintyEstimator:
             self.y_std = model_data['y_std']
             
             # Global parameters (always available)
-            self.μ_global = model_data['μ_global']
+            self.mu_global = model_data['mu_global']
             self.sigma_global = model_data['sigma_global']
             
             # Dataset-specific parameters (optional)
             if use_dataset_specific:
-                self.β = model_data['β']  # (n_datasets, n_features)
+                self.beta = model_data['beta']  # (n_datasets, n_features)
                 self.dataset_names = model_data['dataset_names']
                 
                 if dataset_name is not None:
@@ -207,7 +207,7 @@ class BayesianPoseUncertaintyEstimator:
         features: Dict[str, float]
     ) -> Tuple[float, float]:
         """
-        Predict localization error using Bayesian model.
+        Predict localisation error using Bayesian model.
         
         Args:
             features: Dictionary of frame-level features
@@ -235,11 +235,11 @@ class BayesianPoseUncertaintyEstimator:
         # Predict using appropriate parameters
         if self.use_dataset_specific and hasattr(self, 'dataset_idx'):
             # Use dataset-specific effects
-            β = self.β[self.dataset_idx]
-            error_scaled = np.dot(β, feature_vector_scaled)
+            beta = self.beta[self.dataset_idx]
+            error_scaled = np.dot(beta, feature_vector_scaled)
         else:
             # Use global priors
-            error_scaled = np.dot(self.μ_global, feature_vector_scaled)
+            error_scaled = np.dot(self.mu_global, feature_vector_scaled)
         
         # Unscale to meters
         mean_error = error_scaled * self.y_std + self.y_mean
