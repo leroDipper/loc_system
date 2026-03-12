@@ -1,37 +1,51 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
-dfs = []
-for seq in ['mh_01', 'mh_03', 'mh_05']:
-    df = pd.read_csv(f'results/{seq}_uncertainty250.csv')
-    dfs.append(df)
+environments = ['mh_01', 'mh_03', 'mh_05', 'tum_fr1', 'tum_fr2', 'tum_fr3']
 
-df = pd.concat(dfs, ignore_index=True)
-mean_e = df['error_m'].mean()
-std_e = df['error_m'].std()
-df = df[df['error_m'] < mean_e + 3 * std_e].copy()
+for env in environments:
+    csv_path = f'results/{env}_uncertainty250.csv'
+    align_path = f'resources/{env}/project_files/alignment_results.txt'
 
-features = [
-    "mean_inlier_track_length", "condition_estimate", "match_std_x",
-    "depth_mean", "depth_std", "img_contrast", "depth_range",
-    "img_brightness", "match_spread_normalized", "mean_inverse_depth",
-    "median_inlier_reproj_error", "img_blur_score", "mean_inlier_ba_error"
-]
+    try:
+        loc_df = pd.read_csv(csv_path)
 
-fig, axes = plt.subplots(4, 4, figsize=(16, 14))
-axes = axes.flatten()
+        align_rows = []
+        with open(align_path, 'r') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                parts = line.strip().split()
+                align_rows.append({'frame': parts[0], 'alignment_error_m': float(parts[3])})
 
-for i, feat in enumerate(features):
-    ax = axes[i]
-    ax.scatter(df[feat], df['error_m']*100, alpha=0.05, s=5, color='steelblue')
-    ax.set_xlabel(feat, fontsize=7)
-    ax.set_ylabel('error (cm)', fontsize=7)
-    ax.set_title(feat, fontsize=8)
+        align_df = pd.DataFrame(align_rows)
+        merged = loc_df.merge(align_df, on='frame', how='inner')
 
-for j in range(len(features), len(axes)):
-    axes[j].set_visible(False)
+        phys = merged['translation_std_total_m']
+        align = merged['alignment_error_m']
 
-plt.tight_layout()
-plt.savefig('results/feature_scatter.png', dpi=120, bbox_inches='tight')
-print("Saved to results/feature_scatter.png")
+        corr_phys = np.corrcoef(phys, merged['error_m'])[0, 1]
+        corr_align = np.corrcoef(align, merged['error_m'])[0, 1]
+
+        # Weight from original variances, zero if alignment is negatively correlated
+        if corr_align > 0:
+            residual_variance = align.var()
+            physics_variance = phys.var()
+            w = residual_variance / (residual_variance + physics_variance)
+        else:
+            w = 0.0
+
+        # Normalise both signals to same scale
+        phys_norm = (phys - phys.mean()) / (phys.std() + 1e-9)
+        align_norm = (align - align.mean()) / (align.std() + 1e-9)
+
+        combined = (1 - w) * phys_norm + w * align_norm
+        corr_weighted = np.corrcoef(combined, merged['error_m'])[0, 1]
+
+        print(f"\n{env.upper()} (n={len(merged)}, w={w:.3f})")
+        print(f"  Physics:          {corr_phys:+.3f}")
+        print(f"  Alignment:        {corr_align:+.3f}")
+        print(f"  Weighted combined:{corr_weighted:+.3f}")
+
+    except FileNotFoundError as e:
+        print(f"\n{env.upper()}: skipped — {e}")

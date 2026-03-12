@@ -1,48 +1,42 @@
 #!/usr/bin/env python3
 """
-Align COLMAP reconstruction to EuROC MAV ground truth using Sim(3) transformation.
+Align COLMAP reconstruction to TUM RGB-D ground truth using Sim(3) transformation.
 Uses timestamp-based filenames for matching.
 """
 
 import numpy as np
 from pathlib import Path
 from scipy.spatial.transform import Rotation
-import pandas as pd
 
 
 def load_ground_truth(gt_path):
     """
-    Load ground truth trajectory from EUROC MAV format.
+    Load ground truth trajectory from TUM RGB-D format.
     
-    Format: timestamp tx ty tz qw qx qy qz
+    Format: timestamp tx ty tz qx qy qz qw
     
     Returns:
-        dict: {timestamp_in_seconds: (position, quaternion)}
+        dict: {timestamp: (position, quaternion)}
     """
     gt_data = {}
-    df = pd.read_csv(gt_path, comment='#', header=None)
     
-    timestamps = df.iloc[:, 0].values
-    tx = df.iloc[:, 1].values
-    ty = df.iloc[:, 2].values
-    tz = df.iloc[:, 3].values
-    qw = df.iloc[:, 4].values
-    qx = df.iloc[:, 5].values
-    qy = df.iloc[:, 6].values
-    qz = df.iloc[:, 7].values
-
-    for i in range(len(timestamps)):
-        timestamp = int(timestamps[i])
-        # Convert nanosecond timestamp to seconds
-        timestamp_sec = timestamp / 1e9
-        
-        tx_, ty_, tz_ = float(tx[i]), float(ty[i]), float(tz[i])
-        qx_, qy_, qz_, qw_ = float(qx[i]), float(qy[i]), float(qz[i]), float(qw[i])
-        position = np.array([tx_, ty_, tz_])
-        quaternion = np.array([qx_, qy_, qz_, qw_])
-        gt_data[timestamp_sec] = (position, quaternion)
+    with open(gt_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or line.strip() == '':
+                continue
+            
+            parts = line.strip().split()
+            if len(parts) == 8:
+                timestamp = float(parts[0])
+                tx, ty, tz = float(parts[1]), float(parts[2]), float(parts[3])
+                qx, qy, qz, qw = float(parts[4]), float(parts[5]), float(parts[6]), float(parts[7])
+                
+                position = np.array([tx, ty, tz])
+                quaternion = np.array([qx, qy, qz, qw])
+                
+                gt_data[timestamp] = (position, quaternion)
+    
     return gt_data
-
 
 
 def load_colmap_poses(images_txt_path):
@@ -84,13 +78,10 @@ def extract_timestamp_from_filename(filename):
     Extract timestamp from TUM RGB-D filename.
     Example: '1305031523.092297.png' -> 1305031523.092297
     """
+    # Remove extension and convert to float
     name_without_ext = Path(filename).stem
     try:
-        timestamp = float(name_without_ext)
-        # If timestamp is very large (>1e12), it's likely nanoseconds
-        if timestamp > 1e12:
-            return timestamp / 1e9  # Convert to seconds
-        return timestamp
+        return float(name_without_ext)
     except ValueError:
         return None
 
@@ -197,13 +188,13 @@ def apply_transform(points, scale, R, t):
 
 def main():
     print("=" * 60)
-    print("COLMAP to EuROC Ground Truth Alignment")
+    print("COLMAP to TUM RGB-D Ground Truth Alignment")
     print("=" * 60)
     
     # Paths (update these to your actual paths)
-    gt_path = 'resources/mh_05/data.csv'
-    colmap_path = 'resources/mh_05/project_files/images.txt'
-    output_dir = 'resources/mh_05/project_files'
+    gt_path = 'resources/tum_fr1/groundtruth.txt'
+    colmap_path = 'resources/tum_fr1/project_files/images.txt'
+    output_dir = 'resources/tum_fr1/project_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)
@@ -215,11 +206,11 @@ def main():
     
     # Find corresponding frames
     print("\nMatching frames (time tolerance: 0.02s)...")
-    gt_points, colmap_points, matches = find_corresponding_poses(gt_data, colmap_poses, time_tolerance=0.01)
+    gt_points, colmap_points, matches = find_corresponding_poses(gt_data, colmap_poses)
     print(f"Found {len(matches)} matching frames")
     
     if len(matches) < 3:
-        print("\n Error: Need at least 3 corresponding frames!")
+        print("\n❌ Error: Need at least 3 corresponding frames!")
         return
     
     # Show time matching quality
@@ -235,7 +226,7 @@ def main():
     print("TRANSFORMATION PARAMETERS")
     print(f"{'=' * 60}")
     print(f"\nScale factor: {scale:.6f}")
-    print(f"  â†’ 1 COLMAP unit = {scale:.4f} meters")
+    print(f"  → 1 COLMAP unit = {scale:.4f} meters")
     
     print(f"\nRotation matrix:")
     print(R)
@@ -249,7 +240,8 @@ def main():
     print(f"{'=' * 60}")
     
     colmap_aligned = apply_transform(colmap_points, scale, R, t)
-    errors = np.linalg.norm(colmap_aligned - gt_points, axis=1)
+    residual_vectors = colmap_aligned - gt_points
+    errors = np.linalg.norm(residual_vectors, axis=1)
     
     print(f"\nMean error:   {np.mean(errors):.4f} meters")
     print(f"Median error: {np.median(errors):.4f} meters")
@@ -280,7 +272,7 @@ def main():
     with open(output_path, 'w') as f:
         json.dump(transform_data, f, indent=2)
     
-    print(f"\nSaved transformation to {output_path}")
+    print(f"\n✓ Saved transformation to {output_path}")
     
     # Save detailed results
     results_path = Path(output_dir) / 'alignment_results.txt'
@@ -293,12 +285,12 @@ def main():
         f.write(f"# Mean error: {np.mean(errors):.4f} m\n")
         f.write(f"# Median error: {np.median(errors):.4f} m\n")
         f.write(f"#\n")
-        f.write("# image_name gt_timestamp time_diff_ms error_meters\n")
+        f.write("# image_name gt_timestamp time_diff_ms error_meters rx ry rz\n")
         
-        for (img_name, gt_ts, time_diff), error in zip(matches, errors):
-            f.write(f"{img_name} {gt_ts:.6f} {time_diff*1000:.2f} {error:.4f}\n")
+        for (img_name, gt_ts, time_diff), error, rv in zip(matches, errors, residual_vectors):
+            f.write(f"{img_name} {gt_ts:.6f} {time_diff*1000:.2f} {error:.4f} {rv[0]:.4f} {rv[1]:.4f} {rv[2]:.4f}\n")
     
-    print(f"Saved detailed results to {results_path}")
+    print(f"✓ Saved detailed results to {results_path}")
     
     print(f"\n{'=' * 60}")
     print("SUMMARY")

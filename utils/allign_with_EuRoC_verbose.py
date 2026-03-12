@@ -249,7 +249,8 @@ def main():
     print(f"{'=' * 60}")
     
     colmap_aligned = apply_transform(colmap_points, scale, R, t)
-    errors = np.linalg.norm(colmap_aligned - gt_points, axis=1)
+    residual_vectors = colmap_aligned - gt_points
+    errors = np.linalg.norm(residual_vectors, axis=1)
     
     print(f"\nMean error:   {np.mean(errors):.4f} meters")
     print(f"Median error: {np.median(errors):.4f} meters")
@@ -293,10 +294,10 @@ def main():
         f.write(f"# Mean error: {np.mean(errors):.4f} m\n")
         f.write(f"# Median error: {np.median(errors):.4f} m\n")
         f.write(f"#\n")
-        f.write("# image_name gt_timestamp time_diff_ms error_meters\n")
+        f.write("# image_name gt_timestamp time_diff_ms error_meters rx ry rz\n")
         
-        for (img_name, gt_ts, time_diff), error in zip(matches, errors):
-            f.write(f"{img_name} {gt_ts:.6f} {time_diff*1000:.2f} {error:.4f}\n")
+        for (img_name, gt_ts, time_diff), error, rv in zip(matches, errors, residual_vectors):
+            f.write(f"{img_name} {gt_ts:.6f} {time_diff*1000:.2f} {error:.4f} {rv[0]:.4f} {rv[1]:.4f} {rv[2]:.4f}\n")
     
     print(f"Saved detailed results to {results_path}")
     

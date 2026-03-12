@@ -164,13 +164,13 @@ def load_colmap_image_names(images_txt_path):
 
 if __name__ == "__main__":
     # Load transformation
-    scale, R, t = GroundTruthParams.load_transformation('resources/iphone/project_files/colmap_to_apriltag_transform.json')
-    CAMERA_PARAMS_PATH = 'resources/iphone/images/camera_rectified.yaml'
-    DATASET_PATH = 'resources/iphone'
+    scale, R, t = GroundTruthParams.load_transformation('resources/lab/project_files/colmap_to_apriltag_transform.json')
+    CAMERA_PARAMS_PATH = 'resources/lab/images/camera_rectified.yaml'
+    DATASET_PATH = 'resources/lab'
     COLMAP_DIR = os.path.join(DATASET_PATH, 'project_files')
     N_TRAIN_IMAGES = 700  # Adjust based on your dataset
 
-    test_dataset_path = 'resources/iphone/images'
+    test_dataset_path = 'resources/lab/images'
 
     # Load ground truth
     gt_poses = GroundTruthParams.load_iphone_ground_truth(
@@ -193,10 +193,10 @@ if __name__ == "__main__":
 
     MemoryMonitor.print_memory("After loading XFeat")
 
-    vocabulary = 'resources/iphone/vocabularies/vocab_tree_master.bin'
+    vocabulary = 'resources/lab/vocabularies/vocab_tree_master.bin'
     print("Loaded existing vocabulary")
 
-    data = np.load('resources/iphone/map_databases/iphone_master.npz')
+    data = np.load('resources/lab/map_databases/iphone_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
 
@@ -236,11 +236,11 @@ if __name__ == "__main__":
     MemoryMonitor.print_memory("After building matcher")
 
     print("\n" + "="*60)
-    print("CONTINUOUS LOCALISATION TEST - iphone SEQUENCE")
+    print("CONTINUOUS LOCALISATION TEST - lab SEQUENCE")
     print("="*60)
 
     # Load COLMAP reconstructed images
-    colmap_images = load_colmap_image_names('resources/iphone/project_files/images.txt')
+    colmap_images = load_colmap_image_names('resources/lab/project_files/images.txt')
     colmap_set = set(colmap_images)
 
     # Get chronological order
@@ -419,6 +419,51 @@ if __name__ == "__main__":
             errors.append(error_meters)
             match_counts.append(len(inliers))
 
+             # ========== COMPUTE PHYSICS-BASED UNCERTAINTY ==========
+            try:
+                n_pts = len(inlier_points_3d)
+                pts_cam = (R_cam @ inlier_points_3d.T).T + tvec.flatten()
+                fx, fy = K_cv[0,0], K_cv[1,1]
+                
+                # Build pose Jacobian (2N x 6)
+                J = np.zeros((2 * n_pts, 6))
+                for i in range(n_pts):
+                    X, Y, Z = pts_cam[i]
+                    Z2 = Z * Z
+                    du_dX, du_dZ = fx / Z, -fx * X / Z2
+                    dv_dY, dv_dZ = fy / Z, -fy * Y / Z2
+                    J[2*i,   0] = du_dZ*(-Y);  J[2*i,   1] = du_dX*(-Z) + du_dZ*X;  J[2*i,   2] = du_dX*Y
+                    J[2*i+1, 0] = dv_dZ*(-Y) + dv_dY*Z;  J[2*i+1, 1] = dv_dZ*X;  J[2*i+1, 2] = dv_dY*(-X)
+                    J[2*i,   3] = du_dX;  J[2*i,   4] = 0;       J[2*i,   5] = du_dZ
+                    J[2*i+1, 3] = 0;      J[2*i+1, 4] = dv_dY;   J[2*i+1, 5] = dv_dZ
+
+                sigma2 = float(np.mean(reproj_errors**2)) + 1e-6
+                H = J.T @ J
+                cov_geo = np.linalg.inv(H) * sigma2
+
+                # Per-point map noise
+                sigma_point_sq = (inlier_ba_errors ** 2) / np.maximum(inlier_track_lengths, 1)
+
+                M_cov = np.zeros((6, 6))
+                for i in range(n_pts):
+                    J_i = J[2*i:2*i+2, :]
+                    X, Y, Z = pts_cam[i]
+                    Z2 = Z * Z
+                    J_map_i = np.array([
+                        [fx/Z,  0,    -fx*X/Z2],
+                        [0,     fy/Z, -fy*Y/Z2]
+                    ])
+                    reproj_cov_i = sigma_point_sq[i] * (J_map_i @ J_map_i.T)
+                    M_cov += J_i.T @ reproj_cov_i @ J_i
+                M_cov /= n_pts
+                H_inv = cov_geo / sigma2
+                cov_map = H_inv @ M_cov @ H_inv
+                cov_total = cov_geo + cov_map
+                trans_std_total = float(np.sqrt(np.trace(cov_total[3:, 3:])))
+
+            except Exception:
+                trans_std_total = float(np.mean(reproj_errors))
+
             # ========== BUILD RESULTS LOG ENTRY ==========
             entry = {
                 'frame': frame_name,
@@ -427,6 +472,10 @@ if __name__ == "__main__":
                 'mean_inlier_reproj_error': float(np.mean(reproj_errors)),
                 'median_inlier_reproj_error': float(np.median(reproj_errors)),
                 'std_inlier_reproj_error': float(np.std(reproj_errors)),
+                'translation_std_total_m': trans_std_total,
+                'C_x': float(C_meters[0]),
+                'C_y': float(C_meters[1]),
+                'C_z': float(C_meters[2])
             }
             for key, val in geom_features.items():
                 entry[key] = val

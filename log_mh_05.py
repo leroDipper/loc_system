@@ -281,7 +281,7 @@ if __name__ == "__main__":
 
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=550)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
 
         features = output[0]
@@ -413,6 +413,51 @@ if __name__ == "__main__":
             errors.append(error_meters)
             match_counts.append(len(inliers))
 
+            # ========== COMPUTE PHYSICS-BASED UNCERTAINTY ==========
+            try:
+                n_pts = len(inlier_points_3d)
+                pts_cam = (R_cam @ inlier_points_3d.T).T + tvec.flatten()
+                fx, fy = K_cv[0,0], K_cv[1,1]
+                
+                # Build pose Jacobian (2N x 6)
+                J = np.zeros((2 * n_pts, 6))
+                for i in range(n_pts):
+                    X, Y, Z = pts_cam[i]
+                    Z2 = Z * Z
+                    du_dX, du_dZ = fx / Z, -fx * X / Z2
+                    dv_dY, dv_dZ = fy / Z, -fy * Y / Z2
+                    J[2*i,   0] = du_dZ*(-Y);  J[2*i,   1] = du_dX*(-Z) + du_dZ*X;  J[2*i,   2] = du_dX*Y
+                    J[2*i+1, 0] = dv_dZ*(-Y) + dv_dY*Z;  J[2*i+1, 1] = dv_dZ*X;  J[2*i+1, 2] = dv_dY*(-X)
+                    J[2*i,   3] = du_dX;  J[2*i,   4] = 0;       J[2*i,   5] = du_dZ
+                    J[2*i+1, 3] = 0;      J[2*i+1, 4] = dv_dY;   J[2*i+1, 5] = dv_dZ
+
+                sigma2 = float(np.mean(reproj_errors**2)) + 1e-6
+                H = J.T @ J
+                cov_geo = np.linalg.inv(H) * sigma2
+
+                # Per-point map noise
+                sigma_point_sq = (inlier_ba_errors ** 2) / np.maximum(inlier_track_lengths, 1)
+
+                M_cov = np.zeros((6, 6))
+                for i in range(n_pts):
+                    J_i = J[2*i:2*i+2, :]
+                    X, Y, Z = pts_cam[i]
+                    Z2 = Z * Z
+                    J_map_i = np.array([
+                        [fx/Z,  0,    -fx*X/Z2],
+                        [0,     fy/Z, -fy*Y/Z2]
+                    ])
+                    reproj_cov_i = sigma_point_sq[i] * (J_map_i @ J_map_i.T)
+                    M_cov += J_i.T @ reproj_cov_i @ J_i
+                M_cov /= n_pts
+                H_inv = cov_geo / sigma2
+                cov_map = H_inv @ M_cov @ H_inv
+                cov_total = cov_geo + cov_map
+                trans_std_total = float(np.sqrt(np.trace(cov_total[3:, 3:])))
+
+            except Exception:
+                trans_std_total = float(np.mean(reproj_errors))
+
             # ========== BUILD RESULTS LOG ENTRY ==========
             entry = {
                 'frame': frame_name,
@@ -421,6 +466,11 @@ if __name__ == "__main__":
                 'mean_inlier_reproj_error': float(np.mean(reproj_errors)),
                 'median_inlier_reproj_error': float(np.median(reproj_errors)),
                 'std_inlier_reproj_error': float(np.std(reproj_errors)),
+                'translation_std_total_m': trans_std_total,
+                'C_x': float(C_meters[0]),
+                'C_y': float(C_meters[1]),
+                'C_z': float(C_meters[2])
+                
             }
             for key, val in geom_features.items():
                 entry[key] = val
@@ -468,8 +518,8 @@ if __name__ == "__main__":
             import pandas as pd
             os.makedirs('results', exist_ok=True)
             uncertainty_df = pd.DataFrame(results_log)
-            uncertainty_df.to_csv('results/mh_05_uncertainty550.csv', index=False)
-            print(f"\n✓ Saved detailed data to results/mh_05_uncertainty550.csv")
+            uncertainty_df.to_csv('results/mh_05_uncertainty250.csv', index=False)
+            print(f"\n✓ Saved detailed data to results/mh_05_uncertainty250.csv")
             print(f"  Rows: {len(uncertainty_df)}, Columns: {len(uncertainty_df.columns)}")
 
     MemoryMonitor.print_memory("After continuous localisation")
