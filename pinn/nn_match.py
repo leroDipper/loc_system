@@ -11,9 +11,9 @@ np.random.seed(42)
 
 df = pd.read_csv('results/training_data.csv')
 
-features = ['physics', 'projection', 'pose_jump',
-            'mean_alignment_error', 'anisotropy',
-            'principal_axis_x', 'principal_axis_y', 'principal_axis_z']
+features = ['mean_inlier_reproj_error', 'std_inlier_reproj_error', 
+                     'match_spread_normalized', 'depth_relative_std', 'condition_estimate', 
+                     'mean_inlier_track_length', 'mean_inlier_ba_error', 'frac_high_quality_inliers', 'n_matches', 'n_inliers']
 
 # Train/test split
 lab_df = df[df['env'] == 'lab'].sample(frac=1, random_state=42).reset_index(drop=True)
@@ -38,6 +38,7 @@ train_df = pd.concat(balanced, ignore_index=True)
 means = train_df[features].mean()
 stds = train_df[features].std() + 1e-9
 
+
 def prepare_X(data):
     return ((data[features] - means) / stds).values.astype(np.float32)
 
@@ -47,11 +48,11 @@ y_train = train_df['combined_score'].values.astype(np.float32)
 train_dataset = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
 train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
-class UncertaintyNet(nn.Module):
+class MatchQualityNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(8, 64),
+            nn.Linear(10, 64),
             nn.ReLU(),
             nn.Linear(64, 32),
             nn.ReLU(),
@@ -60,24 +61,31 @@ class UncertaintyNet(nn.Module):
 
     def forward(self, x):
         return self.net(x).squeeze(-1)
-
-model = UncertaintyNet()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    
+model = MatchQualityNet()
+optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
 criterion = nn.L1Loss()
 
-print("Training distillation NN...")
-for epoch in range(500):
+# Training loop
+print("Starting training...")
+epochs = 500
+for epoch in range(epochs):
     model.train()
-    total_loss = 0
-    for xb, yb in train_loader:
-        pred = model(xb)
-        loss = criterion(pred, yb)
-        optimizer.zero_grad()
+    epoch_loss = 0
+    for X_batch, y_batch in train_loader:
+        optimiser.zero_grad()
+        predictions = model(X_batch)
+        loss = criterion(predictions, y_batch)
         loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    if (epoch + 1) % 100 == 0:
-        print(f"  Epoch {epoch+1}: loss={total_loss/len(train_loader):.4f}")
+        optimiser.step()
+        epoch_loss += loss.item() * X_batch.size(0)
+    epoch_loss /= len(train_loader.dataset)
+    if (epoch + 1) % 50 == 0:
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
+
+# Save the trained model
+torch.save(model.state_dict(), 'results/match_quality_model.pth')
+print("Model saved as 'match_quality_model.pth'")
 
 # Get NN scores on all training data to fit normalization
 model.eval()
@@ -112,9 +120,3 @@ for env in test_df['env'].unique():
     print(f"    Score range: [{test_scores_01[mask].min():.3f}, {test_scores_01[mask].max():.3f}]")
     print(f"    Mean score:  {test_scores_01[mask].mean():.3f}")
 
-# Save
-torch.save(model.state_dict(), 'results/uncertainty_nn.pth')
-pd.DataFrame({'mean': means, 'std': stds}).to_csv('results/feature_stats.csv')
-norm_stats = {'score_min': score_min, 'score_max': score_max}
-joblib.dump(norm_stats, 'results/score_normalization.joblib')
-print("\nSaved: uncertainty_nn.pth, feature_stats.csv, score_normalization.joblib")

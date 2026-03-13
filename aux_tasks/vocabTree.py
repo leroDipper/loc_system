@@ -92,7 +92,7 @@ class VocabTreeBuilder:
 
 
 if __name__ == "__main__":
-    data = np.load('resources/iphone/map_databases/iphone_master.npz')
+    data = np.load('resources/tum_fr2/map_databases/tum_fr2_master.npz')
 
     map_descriptors = data['descriptors'].astype(np.float32)
     
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     
     builder = VocabTreeBuilder(n_branches, depth, descriptor_dim)
     builder.build(map_descriptors)
-    builder.save('resources/iphone/vocabularies/vocab_tree_master.bin')
+    builder.save('resources/tum_fr2/vocabularies/vocab_tree_master.bin')
     
     vocab = builder.get_vocabulary()
     print(f"Vocabulary: {vocab.shape}")

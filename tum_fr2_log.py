@@ -419,6 +419,10 @@ if __name__ == "__main__":
             try:
                 n_pts = len(inlier_points_3d)
                 pts_cam = (R_cam @ inlier_points_3d.T).T + tvec.flatten()
+                pts_centered = pts_cam - pts_cam.mean(axis=0)
+                _, s, _ = np.linalg.svd(pts_centered, full_matrices=False)
+                condition_3d = float(s[0] / (s[2] + 1e-9))
+                depth_condition = float(s[0] / (s[1] + 1e-9))
                 fx, fy = K_cv[0,0], K_cv[1,1]
                 
                 # Build pose Jacobian (2N x 6)
@@ -457,6 +461,13 @@ if __name__ == "__main__":
                 cov_total = cov_geo + cov_map
                 trans_std_total = float(np.sqrt(np.trace(cov_total[3:, 3:])))
 
+                # Translation covariance anisotropy
+                trans_cov = cov_total[3:, 3:]
+                eigs = np.linalg.eigvalsh(trans_cov)
+                eigs = np.abs(eigs) + 1e-12
+                trans_anisotropy = float(eigs[2] / eigs[0])
+                trans_max_std = float(np.sqrt(eigs[2]))
+
             except Exception:
                 trans_std_total = float(np.mean(reproj_errors))
 
@@ -468,7 +479,12 @@ if __name__ == "__main__":
                 'mean_inlier_reproj_error': float(np.mean(reproj_errors)),
                 'median_inlier_reproj_error': float(np.median(reproj_errors)),
                 'std_inlier_reproj_error': float(np.std(reproj_errors)),
+                'reproj_error_dist': ','.join(f'{x:.4f}' for x in np.sort(reproj_errors)[:50]),
                 'translation_std_total_m': trans_std_total,
+                'condition_3d': condition_3d,
+                'depth_condition': depth_condition,
+                'trans_anisotropy': trans_anisotropy,
+                'trans_max_std': trans_max_std,
                 'C_x': float(C_meters[0]),
                 'C_y': float(C_meters[1]),
                 'C_z': float(C_meters[2])

@@ -21,7 +21,6 @@ def compute_pose_jump(df, env):
     df = df.sort_values('frame').reset_index(drop=True)
     positions = df[['C_x', 'C_y', 'C_z']].values
     jumps = np.linalg.norm(np.diff(positions, axis=0), axis=1)
-
     if env == 'lab':
         dt = np.ones(len(jumps))
     elif env.startswith('mh'):
@@ -30,7 +29,6 @@ def compute_pose_jump(df, env):
     else:
         timestamps = df['frame'].str.replace('.png', '').astype(float)
         dt = np.diff(timestamps.values)
-
     velocity = jumps / (dt + 1e-9)
     df['pose_jump'] = np.concatenate([[velocity.mean()], velocity])
     return df
@@ -38,12 +36,14 @@ def compute_pose_jump(df, env):
 def rank_normalise(series):
     return rankdata(series, method='average') / len(series)
 
+def normalise(s):
+    return (s - s.mean()) / (s.std() + 1e-9)
+
 def compute_env_features(merged, align_df=None):
     features = {}
     for col, name in [('physics', 'physics'), ('projection', 'projection')]:
         features[f'{name}_mean'] = merged[col].mean()
         features[f'{name}_std'] = merged[col].std()
-
     if align_df is not None and len(align_df) > 0:
         residuals = align_df[['rx', 'ry', 'rz']].values
         features['mean_alignment_error'] = align_df['error'].mean()
@@ -60,7 +60,6 @@ def compute_env_features(merged, align_df=None):
         features['principal_axis_x'] = 0.0
         features['principal_axis_y'] = 0.0
         features['principal_axis_z'] = 0.0
-
     return features
 
 all_dfs = []
@@ -86,8 +85,28 @@ for env in environments:
             principal_axis = eigenvectors[:, -1]
             merged['projection'] = np.abs(residuals @ principal_axis)
 
-        # Raw signals
         merged = merged.rename(columns={'translation_std_total_m': 'physics'})
+
+        # Combined score
+        corr_phys = np.corrcoef(merged['physics'], merged['error_m'])[0, 1]
+        corr_proj = np.corrcoef(merged['projection'], merged['error_m'])[0, 1] if env != 'lab' else 0.0
+        corr_jump = np.corrcoef(merged['pose_jump'], merged['error_m'])[0, 1]
+
+        w_phys = max(corr_phys, 0)
+        w_proj = max(corr_proj, 0)
+        w_jump = max(corr_jump, 0)
+        total = w_phys + w_proj + w_jump + 1e-9
+        w_phys /= total; w_proj /= total; w_jump /= total
+
+        merged['combined_score'] = (w_phys * normalise(merged['physics']) +
+                                    w_proj * normalise(merged['projection']) +
+                                    w_jump * normalise(merged['pose_jump']))
+        merged['w_phys'] = w_phys
+        merged['w_proj'] = w_proj
+        merged['w_jump'] = w_jump
+
+        pearson = np.corrcoef(merged['combined_score'], merged['error_m'])[0, 1]
+        print(f"{env.upper()}: {len(merged)} frames | Pearson={pearson:+.3f} | w_phys={w_phys:.2f} w_proj={w_proj:.2f} w_jump={w_jump:.2f}")
 
         # Rank features
         merged['physics_rank'] = rank_normalise(merged['physics'])
@@ -100,6 +119,7 @@ for env in environments:
             merged[k] = v
 
         merged['env'] = env
+
         keep_cols = ['frame', 'env',
                      'physics', 'projection', 'pose_jump',
                      'physics_rank', 'projection_rank', 'pose_jump_rank',
@@ -107,11 +127,14 @@ for env in environments:
                      'projection_mean', 'projection_std',
                      'mean_alignment_error', 'anisotropy',
                      'principal_axis_x', 'principal_axis_y', 'principal_axis_z',
-                     'error_m']
+                     'error_m',
+                     'mean_inlier_reproj_error', 'std_inlier_reproj_error',
+                     'match_spread_normalized', 'depth_relative_std', 'condition_estimate',
+                     'mean_inlier_track_length', 'mean_inlier_ba_error', 'frac_high_quality_inliers',
+                     'n_matches', 'n_inliers',
+                     'combined_score', 'w_phys', 'w_proj', 'w_jump', 'reproj_error_dist', 'condition_3d','trans_max_std','trans_anisotropy']
         merged = merged[keep_cols]
-
         all_dfs.append(merged)
-        print(f"{env.upper()}: {len(merged)} frames")
 
     except FileNotFoundError as e:
         print(f"{env.upper()}: skipped — {e}")

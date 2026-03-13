@@ -8,6 +8,7 @@
 #include <pybind11/stl.h>
 #include <fstream>
 #include <iostream>
+#include <queue>
 
 namespace py = pybind11;
 
@@ -136,27 +137,42 @@ private:
         }
     }
 
-    std::vector<int> find_k_nearest_leaves(const std::vector<float>& descriptor, int k) {
-        std::vector<std::pair<float, int>> leaf_distances;
+   std::vector<int> find_k_nearest_leaves(const std::vector<float>& descriptor, int k) {
+    using Entry = std::pair<float, int>;
+    std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> pq;
 
-        for (const auto& node : nodes) {
-            if (node.is_leaf) {
-                float dist = compute_distance(descriptor, node.center);
-                leaf_distances.emplace_back(dist, node.node_id);
+    auto node_dist = [&](int node_idx) {
+        float dist = 0.0f;
+        for (int i = 0; i < dim; i++) {
+            float diff = descriptor[i] - nodes[node_idx].center[i];
+            dist += diff * diff;
+        }
+        return dist;
+    };
+
+    pq.push({node_dist(0), 0});
+
+    std::vector<int> nearest_leaves;
+
+    while (!pq.empty() && (int)nearest_leaves.size() < k) {
+        Entry top = pq.top();
+        pq.pop();
+        int node_idx = top.second;
+
+        const TreeNode& node = nodes[node_idx];
+
+        if (node.is_leaf) {
+            nearest_leaves.push_back(node.node_id);
+        } else {
+            for (int child_id : node.children) {
+                pq.push({node_dist(child_id), child_id});
             }
         }
-
-        std::partial_sort(leaf_distances.begin(), 
-                          leaf_distances.begin() + std::min(k, (int)leaf_distances.size()), 
-                          leaf_distances.end());
-
-        std::vector<int> nearest_leaves;
-        for (int i = 0; i < std::min(k, (int)leaf_distances.size()); i++) {
-            nearest_leaves.push_back(leaf_distances[i].second);
-        }
-
-        return nearest_leaves;
     }
+
+    return nearest_leaves;
+}
+
 
 public:
     VocabTreeMatcher(const std::string& vocab_filename,

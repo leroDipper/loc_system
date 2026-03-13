@@ -141,11 +141,13 @@ if __name__ == "__main__":
         
         # Skip if no ground truth available
         if frame_name not in gt_poses:
+            skipped_no_gt += 1
             continue
         
         # Read and process frame
         frame = cv2.imread(frame_path)
         if frame is None:
+            skipped_no_image += 1
             continue
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
@@ -162,7 +164,7 @@ if __name__ == "__main__":
         
         # Match
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
+        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80, k_nearest_words=1)
         t_match = time.time() - t_start
         
         # Filter unique
@@ -179,6 +181,7 @@ if __name__ == "__main__":
             matched_2d.append(keypoints[q_idx])
         
         if len(matched_3d) < 4:  # Need at least 4 points for PnP
+            skipped_too_few_matches += 1
             continue
             
         matched_3d = np.array(matched_3d, dtype=np.float32)
@@ -200,6 +203,15 @@ if __name__ == "__main__":
         timings['extract'].append(t_extract)
         timings['match'].append(t_match)
         timings['pnp'].append(t_pnp)
+
+
+        if not success:
+            pnp_failed += 1
+            continue
+
+        if len(inliers) < 6:
+            rejected_low_inliers += 1
+            continue
         
         if success and len(inliers) >= 6:
             # Check reprojection error of inliers
@@ -244,6 +256,15 @@ if __name__ == "__main__":
     print(f"Total frames attempted: {(len(test_images)-skipped_no_gt)}")
     print(f"Successful localizations: {len(errors)}")
     print(f"Success rate: {len(errors)/(len(test_images)-skipped_no_gt)*100:.1f}%")
+
+    print(f"\n{'='*60}")
+    print("FAILURE BREAKDOWN")
+    print(f"{'='*60}")
+    print(f"Skipped - no ground truth:      {skipped_no_gt}")
+    print(f"Skipped - too few matches (<4): {skipped_too_few_matches}")
+    print(f"PnP RANSAC failed:              {pnp_failed}")
+    print(f"Rejected - low inliers (<6):    {rejected_low_inliers}")
+    print(f"Rejected - high reproj. error:  {rejected_reproj_error}")
     
     if len(errors) > 0:
         print(f"\nLocalization Accuracy:")
