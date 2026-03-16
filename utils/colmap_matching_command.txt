@@ -18,10 +18,14 @@ colmap exhaustive_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/
 
 
 
-colmap sequential_matcher --database_path /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/mh_01_quant.db \
+colmap sequential_matcher --database_path /home/leroy/masters_local/loc_system/resources/v1_02/v1_02.db \
 --FeatureMatching.use_gpu 0
 
 /home/leroy-marewangepo/Masters_Stuff/loc_code_test_pi/resources/mh_01/mh_01_quant.db
+
+
+ colmap exhaustive_matcher --database_path /home/leroy/masters_local/loc_system/resources/v1_02/v1_02.db --FeatureMatching.use_gpu 0 && colmap mapper --database_path /home/leroy/masters_local/loc_system/resources/v1_02/v1_02.db --image_path /home/leroy/masters_local/loc_system/resources/v1_02/images --output_path /home/leroy/masters_local/loc_system/resources/v1_02/project_files
+
 
 
 

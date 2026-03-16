@@ -15,9 +15,9 @@ vocab_tree_ext = Extension(
 image_retrieval_ext = Extension(
     'image_retrieval_match',
     sources=[os.path.join(here, 'image_retrieval_match.cpp')],
-    include_dirs=[pybind11.get_include()],
+    include_dirs=[pybind11.get_include(), '/usr/include/eigen3'],
     language='c++',
-    extra_compile_args=['-std=c++14', '-O3']
+    extra_compile_args=['-std=c++14', '-O3', '-march=native']
 )
 
 setup(

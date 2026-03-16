@@ -1,12 +1,12 @@
 import torch
 import os
-from accelerated_modules import vocab_tree_match
+from accelerated_modules import vocab_tree_match, image_retrieval_match
 from loc_modules.load_gt_params import GroundTruthParams
 import cv2
 import numpy as np
 import time
 import json
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation 
 from loc_modules import MapLoader, Localiser
 import yaml
 from test.memory import MemoryMonitor
@@ -70,7 +70,9 @@ if __name__ == "__main__":
     data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
-    print(f"Loaded FP32 map: {len(map_3d_points)} points")
+    map_image_ids = data['image_ids']
+    image_names = data['image_names']
+    print(f"Loaded map: {len(map_3d_points)} points across {len(image_names)} images")
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -80,13 +82,15 @@ if __name__ == "__main__":
     print(f"  cx={camera_params['cx']:.2f}, cy={camera_params['cy']:.2f}")
 
     K_cv = np.array([[camera_params['fx'], 0, camera_params['cx']],
-                    [0, camera_params['fy'], camera_params['cy']],
-                    [0, 0, 1]], dtype=np.float32)
+                     [0, camera_params['fy'], camera_params['cy']],
+                     [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
-    print("\nBuilding vocabulary matcher...")
+    print("\nBuilding image retrieval matcher...")
     t_start = time.time()
-    matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
+    matcher = image_retrieval_match.ImageRetrievalMatcher(
+        vocabulary, map_descriptors, map_image_ids, len(image_names)
+    )
     t_index = time.time() - t_start
     print(f"Index built in {t_index:.3f}s")
 
@@ -142,7 +146,7 @@ if __name__ == "__main__":
         
         t_start = time.time()
         with torch.no_grad():
-            output = xfeat.detectAndCompute(frame_gray, top_k=200)
+            output = xfeat.detectAndCompute(frame_gray, top_k=250)
         t_extract = time.time() - t_start
         
         features = output[0]

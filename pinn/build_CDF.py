@@ -1,26 +1,29 @@
-import pandas as pd
 import numpy as np
 import joblib
 
-df = pd.read_csv('results/training_data.csv')
+cdf_errors = joblib.load('results/empirical_cdf.joblib')
 
-# Remove outliers per environment
-clean_parts = []
-for env, group in df.groupby('env'):
-    mean_err = group['error_m'].mean()
-    std_err = group['error_m'].std()
-    clean_parts.append(group[group['error_m'] < mean_err + 3 * std_err])
-df_clean = pd.concat(clean_parts, ignore_index=True)
+def score_to_error(score, interval=10):
+    """
+    Convert confidence score (1=certain, 0=uncertain) to metre-level error estimate.
+    
+    Args:
+        score: float in [0, 1], 1=certain
+        interval: percentile interval for confidence bounds (default ±10)
+    
+    Returns:
+        estimate, lower, upper in metres
+    """
+    q = (1.0 - score) * 100
+    estimate = np.percentile(cdf_errors, q)
+    lower = np.percentile(cdf_errors, max(0, q - interval))
+    upper = np.percentile(cdf_errors, min(100, q + interval))
+    return estimate, lower, upper
 
-# Save the sorted error array — this is the empirical CDF
-errors_sorted = np.sort(df_clean['error_m'].values)
-joblib.dump(errors_sorted, 'results/empirical_cdf.joblib')
-
-print(f"CDF built from {len(errors_sorted)} frames")
-print(f"\nExample lookups:")
-for s in [0.2, 0.4, 0.6, 0.8, 0.9, 0.95]:
-    q = (1 - s) * 100
-    est = np.percentile(errors_sorted, q)
-    low = np.percentile(errors_sorted, max(0, q - 10))
-    high = np.percentile(errors_sorted, min(100, q + 10))
-    print(f"  score={s:.2f} → {est*100:.1f}cm [{low*100:.1f} - {high*100:.1f}cm]")
+if __name__ == '__main__':
+    print(f"CDF built from {len(cdf_errors)} frames")
+    print(f"Error range: {cdf_errors.min()*100:.1f}cm — {cdf_errors.max()*100:.1f}cm")
+    print("\nExample lookups:")
+    for score in [0.20, 0.40, 0.60, 0.80, 0.90, 0.95]:
+        est, lo, hi = score_to_error(score)
+        print(f"  score={score:.2f} → {est*100:.1f}cm [{lo*100:.1f} - {hi*100:.1f}cm]")

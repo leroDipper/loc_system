@@ -4,6 +4,9 @@ from scipy.stats import rankdata
 
 environments = ['mh_01', 'mh_03', 'mh_05', 'tum_fr1', 'tum_fr2', 'tum_fr3', 'lab']
 
+# Features that can blow up numerically — clip at 99th percentile per environment
+CLIP_FEATURES = ['condition_3d', 'trans_anisotropy', 'condition_estimate', 'pose_jump']
+
 def load_alignment(align_path):
     rows = []
     with open(align_path, 'r') as f:
@@ -87,6 +90,11 @@ for env in environments:
 
         merged = merged.rename(columns={'translation_std_total_m': 'physics'})
 
+        # Clip numerically unstable features at 99th percentile per environment
+        for col in CLIP_FEATURES:
+            if col in merged.columns:
+                merged[col] = merged[col].clip(upper=merged[col].quantile(0.99))
+
         # Combined score
         corr_phys = np.corrcoef(merged['physics'], merged['error_m'])[0, 1]
         corr_proj = np.corrcoef(merged['projection'], merged['error_m'])[0, 1] if env != 'lab' else 0.0
@@ -108,12 +116,10 @@ for env in environments:
         pearson = np.corrcoef(merged['combined_score'], merged['error_m'])[0, 1]
         print(f"{env.upper()}: {len(merged)} frames | Pearson={pearson:+.3f} | w_phys={w_phys:.2f} w_proj={w_proj:.2f} w_jump={w_jump:.2f}")
 
-        # Rank features
         merged['physics_rank'] = rank_normalise(merged['physics'])
         merged['projection_rank'] = rank_normalise(merged['projection'])
         merged['pose_jump_rank'] = rank_normalise(merged['pose_jump'])
 
-        # Environment features
         env_feats = compute_env_features(merged, align_df)
         for k, v in env_feats.items():
             merged[k] = v
@@ -132,7 +138,8 @@ for env in environments:
                      'match_spread_normalized', 'depth_relative_std', 'condition_estimate',
                      'mean_inlier_track_length', 'mean_inlier_ba_error', 'frac_high_quality_inliers',
                      'n_matches', 'n_inliers',
-                     'combined_score', 'w_phys', 'w_proj', 'w_jump', 'reproj_error_dist', 'condition_3d','trans_max_std','trans_anisotropy']
+                     'combined_score', 'w_phys', 'w_proj', 'w_jump',
+                     'reproj_error_dist', 'condition_3d', 'trans_max_std', 'trans_anisotropy', 'translation_std_crb']
         merged = merged[keep_cols]
         all_dfs.append(merged)
 

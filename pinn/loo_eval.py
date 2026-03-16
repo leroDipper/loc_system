@@ -17,6 +17,11 @@ FEATURES = ['physics', 'projection', 'pose_jump',
 
 ENVIRONMENTS = ['mh_01', 'mh_03', 'mh_05', 'tum_fr1', 'tum_fr2', 'tum_fr3', 'lab']
 
+FAILURE_THRESHOLD = {
+    env: df[df['env'] == env]['error_m'].quantile(0.95)
+    for env in ENVIRONMENTS
+}
+
 class UncertaintyNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -73,8 +78,24 @@ for held_out in ENVIRONMENTS:
     with torch.no_grad():
         preds = model(torch.tensor(X_test)).numpy()
 
-    r = pearsonr(preds, test_df['error_m'].values).statistic
-    results[held_out] = r
-    print(f"  {held_out.upper():10s} (n={len(test_df):4d}): Pearson={r:+.3f}")
+    errors = test_df['error_m'].values
+    r_full = pearsonr(preds, errors).statistic
 
-print(f"\nMean Pearson: {np.mean(list(results.values())):+.3f}")
+    threshold = FAILURE_THRESHOLD[held_out]
+    normal_mask = errors <= threshold
+    n_normal = normal_mask.sum()
+    n_failures = (~normal_mask).sum()
+
+    if n_normal > 2:
+        r_normal = pearsonr(preds[normal_mask], errors[normal_mask]).statistic
+    else:
+        r_normal = float('nan')
+
+    results[held_out] = (r_full, r_normal)
+    print(f"  {held_out.upper():10s} (n={len(test_df):4d}, failures={n_failures:3d}, threshold={threshold:.3f}m): "
+          f"Pearson={r_full:+.3f}  normal={r_normal:+.3f}")
+
+full_scores = [v[0] for v in results.values()]
+normal_scores = [v[1] for v in results.values() if not np.isnan(v[1])]
+print(f"\nMean Pearson (full):   {np.mean(full_scores):+.3f}")
+print(f"Mean Pearson (normal): {np.mean(normal_scores):+.3f}")

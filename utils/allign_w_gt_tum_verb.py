@@ -192,9 +192,9 @@ def main():
     print("=" * 60)
     
     # Paths (update these to your actual paths)
-    gt_path = 'resources/tum_fr1/groundtruth.txt'
-    colmap_path = 'resources/tum_fr1/project_files/images.txt'
-    output_dir = 'resources/tum_fr1/project_files'
+    gt_path = 'resources/tum_fr3/groundtruth.txt'
+    colmap_path = 'resources/tum_fr3/project_files/images.txt'
+    output_dir = 'resources/tum_fr3/project_files'
     # Load data
     print("\nLoading ground truth...")
     gt_data = load_ground_truth(gt_path)

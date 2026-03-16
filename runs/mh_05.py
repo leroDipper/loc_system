@@ -1,6 +1,6 @@
 import torch
 import os
-from accelerated_modules import vocab_tree_match
+from accelerated_modules import vocab_tree_match, image_retrieval_match
 from loc_modules.load_gt_params import GroundTruthParams
 import cv2
 import numpy as np
@@ -70,7 +70,9 @@ if __name__ == "__main__":
     data = np.load('resources/mh_05/map_databases/mh_05_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
-    print(f"Loaded FP32 map: {len(map_3d_points)} points")
+    map_image_ids = data['image_ids']
+    image_names = data['image_names']
+    print(f"Loaded map: {len(map_3d_points)} points across {len(image_names)} images")
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -80,17 +82,20 @@ if __name__ == "__main__":
     print(f"  cx={camera_params['cx']:.2f}, cy={camera_params['cy']:.2f}")
 
     K_cv = np.array([[camera_params['fx'], 0, camera_params['cx']],
-                    [0, camera_params['fy'], camera_params['cy']],
-                    [0, 0, 1]], dtype=np.float32)
+                     [0, camera_params['fy'], camera_params['cy']],
+                     [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
-    print("\nBuilding vocabulary matcher...")
+    print("\nBuilding image retrieval matcher...")
     t_start = time.time()
-    matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
+    matcher = image_retrieval_match.ImageRetrievalMatcher(
+        vocabulary, map_descriptors, map_image_ids, len(image_names)
+    )
     t_index = time.time() - t_start
     print(f"Index built in {t_index:.3f}s")
 
     MemoryMonitor.print_memory("After building matcher")
+
 
     print("\n" + "="*60)
     print("INT8 QUERIES vs FP32 MAP - EUROC mh_05")
@@ -151,7 +156,7 @@ if __name__ == "__main__":
         descriptors = np.clip((descriptors + 0.5) * 255.0, 0, 255).astype(np.uint8)
         
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
+        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80, top_k_images=3)
         t_match = time.time() - t_start
         
         query_to_map = {}

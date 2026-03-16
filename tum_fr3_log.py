@@ -1,6 +1,6 @@
 import torch
 import os
-from accelerated_modules import vocab_tree_match
+from accelerated_modules import vocab_tree_match, image_retrieval_match
 from loc_modules.load_gt_params import GroundTruthParams
 import cv2
 import numpy as np
@@ -163,7 +163,7 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr3/colmap_to_gt_transform.json')
+    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr3/project_files/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/tum_fr3/camera_params.yaml'
     TUM_DATASET_PATH = 'resources/tum_fr3'
 
@@ -194,7 +194,9 @@ if __name__ == "__main__":
     data = np.load('resources/tum_fr3/map_databases/tum_fr3_master.npz')
     map_3d_points = data['xyz_world']
     map_descriptors = data['descriptors']
-
+    map_image_ids = data['image_ids']
+    image_names = data['image_names']
+   
     # Load quality metrics (with backward compatibility)
     if 'track_lengths' in data and 'ba_errors' in data:
         map_track_lengths = data['track_lengths']
@@ -222,9 +224,11 @@ if __name__ == "__main__":
                     [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
-    print("\nBuilding vocabulary matcher...")
+    print("\nBuilding image retrieval matcher...")
     t_start = time.time()
-    matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
+    matcher = image_retrieval_match.ImageRetrievalMatcher(
+        vocabulary, map_descriptors, map_image_ids, len(image_names)
+    )
     t_index = time.time() - t_start
     print(f"Index built in {t_index:.3f}s")
 
@@ -292,7 +296,7 @@ if __name__ == "__main__":
 
         t_start = time.time()
         query_idx_all, map_idx_all, distances_all, ranks_all = matcher.match_with_stats(
-            descriptors, k_nearest_words=3
+            descriptors, top_k_images = 10
         )
         t_match = time.time() - t_start
 
@@ -459,6 +463,7 @@ if __name__ == "__main__":
                 cov_map = H_inv @ M_cov @ H_inv
                 cov_total = cov_geo + cov_map
                 trans_std_total = float(np.sqrt(np.trace(cov_total[3:, 3:])))
+                trans_std_crb = float(np.sqrt(np.trace(cov_geo[3:, 3:])) * scale)
 
                 # Translation covariance anisotropy
                 trans_cov = cov_total[3:, 3:]
@@ -469,6 +474,7 @@ if __name__ == "__main__":
 
             except Exception:
                 trans_std_total = float(np.mean(reproj_errors))
+                trans_std_crb = float(np.mean(reproj_errors))
 
 
             # ========== BUILD RESULTS LOG ENTRY ==========
@@ -485,6 +491,7 @@ if __name__ == "__main__":
                 'depth_condition': depth_condition,
                 'trans_anisotropy': trans_anisotropy,
                 'trans_max_std': trans_max_std,
+                'translation_std_crb': trans_std_crb,
                 'C_x': float(C_meters[0]),
                 'C_y': float(C_meters[1]),
                 'C_z': float(C_meters[2])
