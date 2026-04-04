@@ -7,7 +7,7 @@ import glob
 import yaml
 from scipy.spatial.transform import Rotation
 
-from accelerated_modules import vocab_tree_match
+from accelerated_modules import image_retrieval_match
 from loc_modules.load_gt_params import GroundTruthParams
 from test.memory import MemoryMonitor
 from imu.euroc_imu import EurocIMU
@@ -71,8 +71,11 @@ if __name__ == "__main__":
     vocabulary = 'resources/mh_01/vocabularies/vocab_tree_master.bin'
     data = np.load('resources/mh_01/map_databases/mh_01_master.npz')
     map_3d_points   = data['xyz_world']
-    map_descriptors = data['descriptors']
-    print(f"Loaded map: {len(map_3d_points)} points")
+    map_descriptors = data['descriptors'].astype(np.float32)
+    map_image_ids   = data['image_ids']
+    image_names     = data['image_names']
+    n_images        = len(image_names)
+    print(f"Loaded map: {len(map_3d_points)} points across {n_images} images")
 
     MemoryMonitor.print_memory("After loading map")
 
@@ -86,8 +89,10 @@ if __name__ == "__main__":
     dist_coeffs = np.zeros(5, dtype=np.float32)
 
     # ── Vocab tree matcher ────────────────────────────────────────────
-    print("Building vocabulary matcher...")
-    matcher = vocab_tree_match.VocabTreeMatcher(vocabulary, map_descriptors)
+    print("Building image retrieval matcher...")
+    matcher = image_retrieval_match.ImageRetrievalMatcher(
+        vocabulary, map_descriptors, map_image_ids, n_images
+    )
 
     MemoryMonitor.print_memory("After building matcher")
 
@@ -160,7 +165,7 @@ if __name__ == "__main__":
 
         # ── Matching ──────────────────────────────────────────────────
         t_start = time.time()
-        query_idx, map_idx, distances = matcher.match(descriptors, ratio_threshold=0.80)
+        query_idx, map_idx, distances = matcher.match(descriptors.astype(np.float32), ratio_threshold=0.80, top_k_images=10)
         timings['match'].append(time.time() - t_start)
 
         query_to_map = {}
@@ -238,7 +243,7 @@ if __name__ == "__main__":
         ekf_error = np.linalg.norm(fused_cam_pos - C_gt)
         ekf_errors.append(ekf_error)
 
-        prev_timestamp = curr_timestamp
+        
 
     # ── Results ───────────────────────────────────────────────────────
     print("\n" + "="*60)

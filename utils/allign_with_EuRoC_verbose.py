@@ -235,7 +235,7 @@ def main():
     print("TRANSFORMATION PARAMETERS")
     print(f"{'=' * 60}")
     print(f"\nScale factor: {scale:.6f}")
-    print(f"  â†’ 1 COLMAP unit = {scale:.4f} meters")
+    print(f"  1 COLMAP unit = {scale:.4f} meters")
     
     print(f"\nRotation matrix:")
     print(R)

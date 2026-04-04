@@ -42,7 +42,7 @@ def load_colmap_image_names(images_txt_path):
     return colmap_images
 
 if __name__ == "__main__":
-    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr1/colmap_to_gt_transform.json')
+    scale, R, t = GroundTruthParams.load_transformation('resources/tum_fr1/project_files/colmap_to_gt_transform.json')
     CAMERA_PARAMS_PATH = 'resources/tum_fr1/camera_params.yaml'
     TUM_DATASET_PATH = 'resources/tum_fr1'
 
